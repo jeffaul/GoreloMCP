@@ -1,0 +1,36 @@
+name: AulTECH customization checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  customizations:
+    name: Preserve AulTECH bind and ChatGPT OAuth
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # On PRs, check the proposed merge result, as the existing test workflow does.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Explain changes in the PR and in the real upstream
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/aultech_checks.py changes
+      - uses: astral-sh/setup-uv@v6
+        if: ${{ !cancelled() }}
+      - name: Test actual bind and OAuth behavior without network calls
+        if: ${{ !cancelled() }}
+        run: uv run --frozen --with pytest --with anyio python -m pytest tests/test_aultech_customizations.py tests/test_aultech_checks.py -q -p no:cacheprovider --junitxml=aultech-results.xml
+      - name: Explain behavior results
+        if: ${{ always() }}
+        run: python scripts/aultech_checks.py results aultech-results.xml

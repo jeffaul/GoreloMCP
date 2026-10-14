@@ -780,7 +780,10 @@ async def test_the_old_name_of_the_check_still_exists_and_uses_the_validator(sta
     assert provider._is_redirect_allowed("https://claude.ai@evil.example/cb") is False
     assert provider._is_redirect_allowed("http://claude.ai/cb") is False
     # the constructor has no setting that allows every domain: None means the default list
-    assert make_provider(state_dir.parent / "none", allowed_redirect_domains=None).allowed_redirect_domains == ALLOWED
+    # AulTECH's provider defaults include ChatGPT; ALLOWED above is the validator's narrower test fixture.
+    assert make_provider(state_dir.parent / "none", allowed_redirect_domains=None).allowed_redirect_domains == [
+        "claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost",
+    ]
     narrower = make_provider(state_dir.parent / "narrow", allowed_redirect_domains=["claude.ai"])
     assert narrower._is_redirect_allowed(REDIRECT) is True and narrower._is_redirect_allowed("http://localhost:1/cb") is False
     # the validator's own meaning of "no list": every https host, still never http away from loopback

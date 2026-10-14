@@ -163,7 +163,34 @@ Future GitHub Actions checks should verify that:
 
 If these checks fail, deployment should be blocked until the changes are reviewed.
 
-These checks have not yet been implemented.
+The `AulTECH customization checks` workflow runs on pull requests and can also be run manually.
+It adds plain-English file annotations and a job summary:
+
+- PR changes are compared from the PR's shared base to its head and labeled "modified in this PR."
+- Real upstream changes are fetched from `Coach40oz/GoreloMCP` main and compared from its shared
+  commit with the PR target branch to the fetched upstream commit. The exact commits appear in
+  the summary. This identifies upstream changes since that shared point, including changes
+  that the PR may already incorporate. It does not infer upstream changes from a fork diff.
+- When upstream cannot be fetched or compared, the check fails and says upstream was not verified.
+- File changes produce review warnings. Tests that fail or cannot run produce errors and fail the check.
+
+The offline behavior tests verify the actual startup call for the localhost default and several
+`MCP_BIND_HOST` values. They set the variable before importing `main.py`, as systemd does; the
+current code reads it at import time, before `load_dotenv()` runs. This does not claim that a
+value supplied only in `.env` controls the bind address.
+
+OAuth tests instantiate the real provider without overriding its allowlist and exercise its HTTP
+registration and password-approved authorization endpoints for `chatgpt.com`, `openai.com`,
+the existing Claude domains and localhost. They also check rejection of unrelated domains,
+lookalike domains, insecure ChatGPT HTTP callbacks, userinfo and fragments. The existing
+`tests` workflow continues to run the complete offline suite.
+
+No check opens a server socket, accesses Gorelo, verifies AWS networking or tests a live ChatGPT
+connection. The workflow has read-only repository permissions and performs no deployment.
+Use a PR when syncing upstream rather than updating production `main` directly. To enforce
+checks before merging, configure branch protection/rulesets to require both `Preserve AulTECH
+bind and ChatGPT OAuth` and the existing `pytest` check; adding this workflow alone does not
+make those checks mandatory or block an external deployment system.
 
 ## 6. GitHub and Deployment Policy
 
@@ -187,4 +214,4 @@ A future GitHub webhook deployment process should use authenticated webhook requ
 
 **Created:** October 14, 2026
 
-**Status:** Both customizations implemented and ChatGPT connectivity confirmed. Automated validation and webhook deployment pending.
+**Status:** Both customizations implemented and ChatGPT connectivity confirmed. PR customization checks implemented; webhook deployment pending.
