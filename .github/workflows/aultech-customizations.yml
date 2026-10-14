@@ -1,7 +1,9 @@
-name: AulTECH customization checks
+name: AulTECH checks and PROD deployment
 
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -12,25 +14,95 @@ jobs:
     name: Preserve AulTECH bind and ChatGPT OAuth
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
     steps:
-      # On PRs, check the proposed merge result, as the existing test workflow does.
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+
+      # Keep the existing change report for PRs and manual runs.
+      # Pushes to main are gated by the behavior tests below.
       - name: Explain changes in the PR and in the real upstream
+        if: github.event_name != 'push'
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python scripts/aultech_checks.py changes
+
       - uses: astral-sh/setup-uv@v6
         if: ${{ !cancelled() }}
+
       - name: Test actual bind and OAuth behavior without network calls
         if: ${{ !cancelled() }}
-        run: uv run --frozen --with pytest --with anyio python -m pytest tests/test_aultech_customizations.py tests/test_aultech_checks.py -q -p no:cacheprovider --junitxml=aultech-results.xml
+        run: >-
+          uv run --frozen --with pytest --with anyio
+          python -m pytest
+          tests/test_aultech_customizations.py
+          tests/test_aultech_checks.py
+          -q -p no:cacheprovider
+          --junitxml=aultech-results.xml
+
       - name: Explain behavior results
         if: ${{ always() }}
         run: python scripts/aultech_checks.py results aultech-results.xml
+
+  deploy:
+    name: Deploy checked main to PROD
+    needs: customizations
+    if: >-
+      github.repository == 'jeffaul/GoreloMCP' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' ||
+       github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    permissions: {}
+
+    concurrency:
+      group: gorelo-prod-deployment
+      cancel-in-progress: false
+
+    steps:
+      - name: Update and restart PROD
+        env:
+          DEPLOY_URL: ${{ secrets.PROD_DEPLOY_URL }}
+          DEPLOY_TOKEN: ${{ secrets.PROD_DEPLOY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$DEPLOY_URL" || -z "$DEPLOY_TOKEN" ]]; then
+            echo "::error::Missing PROD_DEPLOY_URL or PROD_DEPLOY_TOKEN in repository secrets."
+            exit 1
+          fi
+
+          response_file=$(mktemp)
+          trap 'rm -f "$response_file"' EXIT
+
+          echo "Customization checks passed. Requesting PROD deployment..."
+
+          if ! status=$(curl --silent --show-error \
+            --proto '=https' \
+            --connect-timeout 15 \
+            --max-time 320 \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer $DEPLOY_TOKEN" \
+            --request POST "$DEPLOY_URL"); then
+            echo "::error::Could not confirm deployment. Check PROD logs before retrying."
+            exit 1
+          fi
+
+          if [[ "$status" != "200" ]] ||
+             ! grep -qx 'Deployment completed successfully' "$response_file"; then
+            echo "::error::PROD did not confirm a successful deployment. HTTP status: $status. Check the tunnel and PROD deployment logs."
+            exit 1
+          fi
+
+          echo "PROD confirmed that deployment completed successfully."
+          echo "### PROD deployment completed successfully" >> "$GITHUB_STEP_SUMMARY"
