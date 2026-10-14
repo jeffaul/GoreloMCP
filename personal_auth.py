@@ -210,7 +210,7 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
 
         self.password = password
         self.allowed_redirect_domains = allowed_redirect_domains if allowed_redirect_domains is not None else [
-            "claude.ai", "claude.com", "localhost"
+            "claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost"
         ]
         self.access_token_expiry_seconds = access_token_expiry_seconds
         self.refresh_access_token_expiry_seconds = refresh_access_token_expiry_seconds
