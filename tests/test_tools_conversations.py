@@ -533,7 +533,7 @@ async def test_two_spellings_of_one_type_count_as_one_type_for_a_conversation_id
 @pytest.mark.parametrize(
     "arguments, fragments",
     [
-        ({"ticket_id": "TCK-2029"}, ["ticket_id: expected a GUID such as", "text that is not a GUID"]),
+        ({"ticket_id": "TCK-4242"}, ["ticket_id: expected a GUID such as", "text that is not a GUID"]),
         ({"ticket_id": "not-a-uuid"}, ["ticket_id: expected a GUID such as"]),
         ({"ticket_id": ""}, ["ticket_id: expected a GUID such as", "an empty string"]),
         ({"ticket_id": TICKET, "conversation_types": []}, ["conversation_types: must contain at least one of public, private, side_conversation, approval"]),
@@ -613,7 +613,7 @@ async def test_get_comment_returns_the_record_unchanged(server, mock_gorelo):
 @pytest.mark.parametrize(
     "arguments, fragment",
     [
-        ({"ticket_id": "TCK-2029", "comment_id": COMMENT}, "ticket_id: expected a GUID such as"),
+        ({"ticket_id": "TCK-4242", "comment_id": COMMENT}, "ticket_id: expected a GUID such as"),
         ({"ticket_id": TICKET, "comment_id": "abc"}, "comment_id: expected a GUID such as"),
         ({"ticket_id": TICKET, "comment_id": ""}, "comment_id: expected a GUID such as"),
         ({"ticket_id": TICKET, "comment_id": COMMENT + "0"}, "comment_id: expected a GUID such as"),
@@ -880,7 +880,7 @@ async def test_create_comment_a_gateway_error_is_unconfirmed_and_is_not_retried(
     [
         ({"body": ""}, ["body: must not be empty or whitespace only"]),
         ({"body": "   \n\t"}, ["body: must not be empty or whitespace only"]),
-        ({"ticket_id": "TCK-2029"}, ["ticket_id: expected a GUID such as", "text that is not a GUID"]),
+        ({"ticket_id": "TCK-4242"}, ["ticket_id: expected a GUID such as", "text that is not a GUID"]),
         ({"ticket_id": ""}, ["ticket_id: expected a GUID such as"]),
         ({"conversation_type": "bogus"}, ["conversation_type", "'private'", "'approval'"]),
         ({"conversation_type": "side_conversation"}, ["conversation_id: required when conversation_type is 'side_conversation'", "create_ticket_side_conversation"]),
@@ -994,7 +994,7 @@ async def test_list_conversations_is_an_unpaged_list_with_no_query(server, mock_
     assert [row["Id"] for row in result["items"]] == [None, None, "4821", APPROVAL]  # Public and Private have a null Id
 
 
-@pytest.mark.parametrize("ticket_id", ["TCK-2029", "", "123", TICKET[:-1]])
+@pytest.mark.parametrize("ticket_id", ["TCK-4242", "", "123", TICKET[:-1]])
 async def test_list_conversations_rejects_a_ticket_id_that_is_not_a_uuid(server, mock_gorelo, ticket_id):
     await refused(server, mock_gorelo, "list_ticket_conversations", {"ticket_id": ticket_id}, "ticket_id: expected a GUID such as")
 
@@ -1102,7 +1102,7 @@ async def test_create_side_conversation_accepts_the_longest_allowed_values(serve
         ({"cc_emails": [""]}, ["cc_emails[0]: must not be empty or whitespace only"]),
         ({"cc_emails": ["a" * 39 + "@example.com"]}, ["cc_emails[0]: Gorelo accepts at most 50 characters"]),
         ({"cc_emails": "a@x.example"}, ["cc_emails"]),
-        ({"ticket_id": "TCK-2029"}, ["ticket_id: expected a GUID such as"]),
+        ({"ticket_id": "TCK-4242"}, ["ticket_id: expected a GUID such as"]),
     ],
 )
 async def test_create_side_conversation_local_validation_errors_make_no_http_call(server, mock_gorelo, arguments, fragments):
@@ -1250,7 +1250,7 @@ async def test_create_approval_a_success_without_an_id_is_unconfirmed(server, mo
         ({"contact_ids": ["5"]}, ["contact_ids.0", "valid integer"]),
         ({"contact_ids": [5.0]}, ["contact_ids.0", "valid integer"]),
         ({"contact_ids": [None]}, ["contact_ids.0"]),
-        ({"ticket_id": "TCK-2029"}, ["ticket_id: expected a GUID such as"]),
+        ({"ticket_id": "TCK-4242"}, ["ticket_id: expected a GUID such as"]),
     ],
 )
 async def test_create_approval_local_validation_errors_make_no_http_call(server, mock_gorelo, arguments, fragments):
@@ -1318,7 +1318,7 @@ async def test_get_approval_returns_the_record_where_status_lives(server, mock_g
 @pytest.mark.parametrize(
     "arguments, fragment",
     [
-        ({"ticket_id": "TCK-2029", "approval_id": APPROVAL}, "ticket_id: expected a GUID such as"),
+        ({"ticket_id": "TCK-4242", "approval_id": APPROVAL}, "ticket_id: expected a GUID such as"),
         ({"ticket_id": TICKET, "approval_id": "4821"}, "approval_id: expected a GUID such as"),
         ({"ticket_id": TICKET, "approval_id": ""}, "approval_id: expected a GUID such as"),
         ({"ticket_id": TICKET}, "approval_id"),
@@ -1519,7 +1519,7 @@ async def test_delete_comment_a_rate_limit_that_persists_is_not_an_unconfirmed_w
 @pytest.mark.parametrize(
     "arguments, fragment",
     [
-        ({"ticket_id": "TCK-2029", "comment_id": COMMENT}, "ticket_id: expected a GUID such as"),
+        ({"ticket_id": "TCK-4242", "comment_id": COMMENT}, "ticket_id: expected a GUID such as"),
         ({"ticket_id": TICKET, "comment_id": "abc"}, "comment_id: expected a GUID such as"),
         ({"ticket_id": TICKET, "comment_id": ".."}, "comment_id: expected a GUID such as"),
         ({"ticket_id": TICKET, "comment_id": f"{COMMENT}/.."}, "comment_id: expected a GUID such as"),

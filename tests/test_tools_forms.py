@@ -583,7 +583,7 @@ async def test_both_a_ticket_and_a_task_is_a_local_error(server, mock_gorelo):
         ({"form_id": ""}, "form_id: expected a form Id from list_forms"),
         ({"form_id": "x" * 51}, "form_id: expected a form Id from list_forms"),
         ({"form_id": "a/../b"}, "form_id: expected a form Id from list_forms"),
-        ({"form_id": "aB3dE9", "ticket_id": "TCK-2029"}, "ticket_id: expected a GUID"),
+        ({"form_id": "aB3dE9", "ticket_id": "TCK-4242"}, "ticket_id: expected a GUID"),
         ({"form_id": "aB3dE9", "ticket_id": ""}, "ticket_id: expected a GUID"),
         ({"form_id": "aB3dE9", "task_id": "12345"}, "task_id: expected a GUID"),
         ({"form_id": "aB3dE9", "task_id": uid(1)[:-1]}, "task_id: expected a GUID"),

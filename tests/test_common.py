@@ -1908,7 +1908,7 @@ NOT_TEXT_GUID = "text that is not a GUID"
         (GUID.replace("-", "_"), NOT_TEXT_GUID),
         (GUID.replace("-", "", 1), NOT_TEXT_GUID),  # one hyphen missing
         ("3f2b8c1e-0d4a4b7e-9a51-2c6d8e9f0a1b", NOT_TEXT_GUID),  # hyphens in the wrong places
-        ("TCK-2029", NOT_TEXT_GUID),
+        ("TCK-4242", NOT_TEXT_GUID),
         ("12345", NOT_TEXT_GUID),
         ("３f2b8c1e-0d4a-4b7e-9a51-2c6d8e9f0a1b", NOT_TEXT_GUID),  # a full-width digit
         ("", "an empty string"),
@@ -2950,6 +2950,27 @@ def test_an_exact_mapping_still_wins_over_the_ancestor_and_ignores_the_index():
 )
 def test_a_list_property_without_a_mapped_ancestor_or_with_a_malformed_index_keeps_gorelos_name(prop):
     assert _named(prop, INDEX_MAP) == prop
+
+
+def test_an_index_of_18_digits_is_still_an_item_number_and_one_of_19_digits_is_not():
+    # the cap only keeps int() away from absurd input: no list has so many items
+    assert _named("Attachments[999999999999999999].Url", INDEX_MAP) == "attachments (item 1000000000000000000, Url)"
+    assert _named("Attachments[9999999999999999999].Url", INDEX_MAP) == "Attachments[9999999999999999999].Url"
+    assert _named("Attachments[0].Files[9999999999999999999].Path", INDEX_MAP) == "Attachments[0].Files[9999999999999999999].Path"
+    assert _named("Attachments[1].Files[2].Path", INDEX_MAP) == "attachments (item 2, Files item 3, Path)"  # unchanged
+    assert _named("Attachments[9999999999999999999]", INDEX_MAP) == "attachments"  # the item itself, mapped without a number
+
+
+@pytest.mark.parametrize("digits", [19, 4300, 4301, 5000, 50000])
+def test_an_index_with_thousands_of_digits_keeps_gorelos_name_and_does_not_crash_the_error_text(digits):
+    # int() refuses more than 4300 digits: the error text used to raise ValueError, and the model lost the status, the
+    # trace and the advice to verify a write with a read
+    prop = "Attachments[" + "9" * digits + "].Url"
+    err = gerr(("070101", "bad url", prop), status=500, write_unconfirmed=True)
+    assert format_gorelo_error(err, "create_thing", INDEX_MAP) == (
+        f"Gorelo rejected create_thing (HTTP 500, code 070101): {prop}: bad url. "
+        "Gorelo may have applied the change before failing. Verify with a read before retrying. [trace 00-abc-01]"
+    )
 
 
 def test_a_sibling_path_is_not_an_ancestor_and_an_empty_map_maps_nothing():

@@ -419,7 +419,7 @@ async def test_a_255_character_filename_is_accepted(server, mock_gorelo):
 
 @pytest.mark.parametrize(
     "item_id",
-    ["abc", "TCK-2029", "", "123", ITEM + "0", ITEM[:-1], f"{ITEM}/..", "..%2F..", "{" + ITEM + "}", "urn:uuid:" + ITEM,
+    ["abc", "TCK-4242", "", "123", ITEM + "0", ITEM[:-1], f"{ITEM}/..", "..%2F..", "{" + ITEM + "}", "urn:uuid:" + ITEM,
      f" {ITEM}\n", f"{ITEM} ", f"\t{ITEM}"],
 )
 async def test_the_item_id_must_be_a_uuid(server, mock_gorelo, item_id):
