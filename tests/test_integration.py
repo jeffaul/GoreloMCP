@@ -2,8 +2,10 @@
 
 These pin the tool surface: the exact tool names per toolset,
 the default exposure, destructive gating, MCP hints, LLM-facing metadata, and that every one of the
-96 spec operations (contract e15cb5a18ec2, 2026-10-02) is either declared by a tool, forbidden, or deliberately
-excluded. The four operations that contract added with a tool (GET /v1/alerts, POST /v1/invoices,
+103 spec operations (2026-10-12 contract) is either declared by a tool, forbidden, or deliberately
+excluded. The 2026-10-12 contract added the custom asset create, update and hardware types (declared by tools) and
+GET /v1/api-keys and DELETE /v1/api-keys/{apiKeyId} (deliberately not exposed: no tool reaches /v1/api-keys at all).
+The four operations that contract e15cb5a18ec2 added with a tool (GET /v1/alerts, POST /v1/invoices,
 GET /v1/invoices/{invoiceId} and, forbidden, POST /v1/api-keys) are pinned one by one at the end of the coverage checks.
 """
 
@@ -25,6 +27,7 @@ EXPECTED = {
             "health_check", "list_clients", "get_client", "create_client", "update_client",
             "list_client_locations", "list_contacts", "get_contact", "create_contact", "update_contact",
             "list_org_groups", "list_org_users", "list_agents", "get_agent", "list_custom_assets",
+            "list_custom_asset_hardware_types", "create_custom_asset", "update_custom_asset",
             "post_alert", "list_alerts",
         },
         "gated": set(),
@@ -93,6 +96,19 @@ EXCLUDED_OPS = {
     # Added by the 2026-10-08 spec (98 operations). Money movement: no tool is built on them.
     "POST /v1/payments",
     "DELETE /v1/payments/{paymentId}",
+    # Added by the 2026-10-12 spec (103 operations). API credentials: no tool reaches /v1/api-keys at all (the list
+    # shows who holds keys, the DELETE revokes one, and POST /v1/api-keys, which mints one, is forbidden).
+    "GET /v1/api-keys",
+    "DELETE /v1/api-keys/{apiKeyId}",
+}
+
+# The operations the 2026-10-12 contract added with a tool, and which tools declare each. The custom asset list is
+# the read-back of both writes: Gorelo has no GET for a single custom asset.
+CUSTOM_ASSET_OPS_AND_THEIR_TOOLS = {
+    "GET /v1/assets/custom/hardware-types": {"list_custom_asset_hardware_types"},
+    "POST /v1/assets/custom": {"create_custom_asset"},
+    "PATCH /v1/assets/custom/{customAssetId}": {"update_custom_asset"},
+    "GET /v1/assets/custom": {"list_custom_assets", "create_custom_asset", "update_custom_asset"},
 }
 
 # The operations contract e15cb5a18ec2 (2026-10-02) added, and which tools declare each: the alert list, the invoice
@@ -120,9 +136,9 @@ def test_registry_matches_the_configured_surface_exactly():
         got_gated = {n for n, s in specs.items() if s.toolset == toolset and s.kind == "destructive"}
         assert got_regular == groups["regular"], (toolset, got_regular ^ groups["regular"])
         assert got_gated == groups["gated"], (toolset, got_gated ^ groups["gated"])
-    assert len(specs) == 89
+    assert len(specs) == 92
     regular = {n for n, s in specs.items() if s.kind != "destructive"}
-    assert (len(regular), len(specs) - len(regular)) == (81, 8)
+    assert (len(regular), len(specs) - len(regular)) == (84, 8)
 
 
 def test_all_24_legacy_tool_names_still_exist():
@@ -139,7 +155,7 @@ def test_every_spec_operation_is_covered_or_deliberately_excluded(spec_index):
     assert not declared & EXCLUDED_OPS
     uncovered = set(spec_index.ops) - declared - forbidden - EXCLUDED_OPS
     assert uncovered == set(), sorted(uncovered)
-    assert len(spec_index.ops) == 98
+    assert len(spec_index.ops) == 103
     assert not any("/v1/payments" in op for op in declared)  # payments are recorded money: no tool reaches them
 
 
@@ -157,13 +173,31 @@ def test_each_operation_the_2026_10_02_spec_added_is_declared_by_exactly_the_too
     assert {s.name for s in REGISTRY.specs if s.name in posters and s.kind == "destructive"} == {"create_approved_invoice"}
 
 
+def test_each_operation_the_2026_10_12_spec_added_is_declared_by_exactly_the_tools_meant_to_use_it(spec_index):
+    for op, expected in CUSTOM_ASSET_OPS_AND_THEIR_TOOLS.items():
+        assert op in spec_index.ops, op
+        assert {s.name for s in REGISTRY.specs if op in s.ops} == expected, op
+    # the DELETE of a custom asset stays forbidden: no tool declares it
+    assert not any(is_forbidden_op(op) for op in CUSTOM_ASSET_OPS_AND_THEIR_TOOLS)
+    assert not any(is_forbidden_op(op) for s in REGISTRY.specs for op in s.ops)
+    # the API key operations are deliberately not exposed: no tool declares anything under /v1/api-keys
+    for op in ("GET /v1/api-keys", "DELETE /v1/api-keys/{apiKeyId}", "POST /v1/api-keys"):
+        assert not [s.name for s in REGISTRY.specs if op in s.ops], op
+    assert not [s.name for s in REGISTRY.specs if any("/v1/api-keys" in op for op in s.ops)]
+    assert not any("/v1/api-keys" in op for op in {op for s in REGISTRY.specs for op in s.ops})
+    # creating and updating write; neither can delete
+    kinds = {s.name: (s.kind, s.destructive_hint) for s in REGISTRY.specs}
+    assert kinds["create_custom_asset"] == ("write", False) and kinds["update_custom_asset"] == ("write", True)
+    assert kinds["list_custom_asset_hardware_types"][0] == "read"
+
+
 @pytest.mark.anyio
-async def test_default_toolsets_expose_58_tools_and_no_gated_ones(server_factory):
+async def test_default_toolsets_expose_61_tools_and_no_gated_ones(server_factory):
     server = server_factory(toolsets=frozenset(DEFAULT_TOOLSETS), destructive=False)
     names = {t.name for t in await list_tools(server)}
     expected = set().union(*(EXPECTED[ts]["regular"] for ts in DEFAULT_TOOLSETS))
     assert names == expected
-    assert len(names) == 58  # 55 until contract e15cb5a18ec2 added list_alerts, get_invoice and create_invoice
+    assert len(names) == 61  # 58 until the 2026-10-12 contract added the three custom asset tools
     assert {"list_alerts", "get_invoice", "create_invoice"} <= names
     assert "create_approved_invoice" not in names  # it needs GORELO_ENABLE_DESTRUCTIVE as well
 
@@ -220,15 +254,21 @@ async def test_destructive_tools_require_confirm_defaulting_to_false(server_fact
 async def test_default_tools_list_stays_within_budget(server_factory):
     tools_list = await list_tools(server_factory(toolsets=frozenset(DEFAULT_TOOLSETS), destructive=False))
     size = len(json.dumps([t.model_dump(mode="json", exclude_none=True) for t in tools_list]))
-    # Budget set from the measured size plus ~9% headroom, raised once for the three default tools
-    # contract e15cb5a18ec2 added; growth beyond it needs a deliberate bump, because every byte here is context
-    # claude.ai loads in every conversation that uses the connector.
+    # The budget sits about 1 percent above the size measured with the custom property texts (see the constant below). It
+    # was raised once for the three default tools contract e15cb5a18ec2 added and once more for the custom properties of
+    # contract 1b1c0cec0e9a; growth beyond it needs a deliberate bump, because every byte here is context claude.ai loads
+    # in every conversation that uses the connector.
     assert size < TOOLS_LIST_BUDGET_BYTES, size
 
 
-# The default tools/list is about 82_700 bytes (gated tools such as the delete tools and create_approved_invoice are not in it);
-# the budget leaves room for roughly 8 percent more.
-TOOLS_LIST_BUDGET_BYTES = 89_100
+# The default tools/list is 90_209 bytes with all the texts of the custom properties (gated tools such as the delete
+# tools and create_approved_invoice are not in it). Before them it was 89_083 bytes. They add 842 bytes for update_client,
+# which gained custom_properties and clear_custom_property_ids (an object entry {id, value} and a list of ids, with their
+# texts), and for the get_client and list_clients texts about CustomProperties (contract 1b1c0cec0e9a), 73 bytes for the
+# same contract's sentence on the two device tools, 108 bytes for the update_client sentence that has the model compare
+# the returned Values with what it sent, and 103 bytes for the one that says update_client reads the client first. The
+# budget leaves 891 bytes (about 1 percent) above that, a little room for growth.
+TOOLS_LIST_BUDGET_BYTES = 91_100
 MAX_TOOL_DESCRIPTION_CHARS = 900
 MAX_PARAM_DESCRIPTION_CHARS = 220
 
