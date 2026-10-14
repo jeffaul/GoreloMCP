@@ -12,7 +12,7 @@ permissions:
 jobs:
   customizations:
     name: Preserve AulTECH bind and ChatGPT OAuth
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04.
     timeout-minutes: 10
 
     steps:
@@ -34,7 +34,7 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python scripts/aultech_checks.py changes
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         if: ${{ !cancelled() }}
 
       - name: Test actual bind and OAuth behavior without network calls
@@ -59,7 +59,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' ||
        github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
+    runs-on: REQ-61278
     timeout-minutes: 7
     permissions: {}
 
