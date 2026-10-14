@@ -1,0 +1,58 @@
+name: Deploy Gorelo MCP to PROD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: gorelo-prod-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository == 'jeffaul/GoreloMCP' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+
+    steps:
+      - name: Update and restart PROD
+        env:
+          DEPLOY_URL: ${{ secrets.PROD_DEPLOY_URL }}
+          DEPLOY_TOKEN: ${{ secrets.PROD_DEPLOY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$DEPLOY_URL" || -z "$DEPLOY_TOKEN" ]]; then
+            echo "::error::Missing PROD_DEPLOY_URL or PROD_DEPLOY_TOKEN in repository secrets."
+            exit 1
+          fi
+
+          response_file=$(mktemp)
+          trap 'rm -f "$response_file"' EXIT
+
+          echo "Requesting deployment of the latest main branch on PROD..."
+
+          if ! status=$(curl --silent --show-error \
+            --proto '=https' \
+            --connect-timeout 15 \
+            --max-time 320 \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer $DEPLOY_TOKEN" \
+            --request POST "$DEPLOY_URL"); then
+            echo "::error::Could not confirm deployment. Check PROD logs before retrying."
+            exit 1
+          fi
+
+          if [[ "$status" != "200" ]] ||
+             ! grep -qx 'Deployment completed successfully' "$response_file"; then
+            echo "::error::PROD did not confirm a successful deployment. HTTP status: $status. Check the tunnel and PROD deployment logs."
+            exit 1
+          fi
+
+          echo "PROD confirmed that deployment completed successfully."
+          echo "### PROD deployment completed successfully" >> "$GITHUB_STEP_SUMMARY"
