@@ -27,7 +27,7 @@ from settings import Settings, SettingsError
 # systemd WorkingDirectory, so the OAuth state stays in the same ./.oauth-state it always used
 # (PersonalAuthProvider's default was the relative path ".oauth-state").
 APP_DIR = Path(__file__).resolve().parent
-HOST = "127.0.0.1"
+HOST = os.environ.get("MCP_BIND_HOST", "127.0.0.1")
 PORT = 8765
 
 logger = logging.getLogger("gorelo-mcp")
