@@ -232,7 +232,7 @@ def test_the_single_client_is_the_list_row_plus_custom_properties_in_the_spec(sp
     custom = record["CustomProperties"]
     assert (custom["type"], custom["items"]["ref"], custom["nullable"]) == ("array", "CustomPropertyValue", False)
     value = spec_index.schema("CustomPropertyValue")
-    assert set(value["fields"]) == {"Id", "Variable", "Name", "Type", "Value", "IsSet"} and not value["additional_properties"]
+    assert set(value["fields"]) == {"Id", "Variable", "Name", "Type", "Value", "IsSet", "IsHidden"} and not value["additional_properties"]
     assert value["fields"]["Value"]["nullable"] is True and value["fields"]["IsSet"]["type"] == "boolean"
     doc = flat(clients_module.__doc__)
     assert "ClientListItemResponse" in doc and "the same fields as the single record" not in doc
@@ -242,8 +242,8 @@ def test_the_single_client_is_the_list_row_plus_custom_properties_in_the_spec(sp
 
 def test_the_docstrings_carry_the_documented_facts():
     listing = flat(clients_module.list_clients.__doc__)
-    # contract e15cb5a18ec2: "when omitted, inactive (2) clients are excluded, and when supplied only the listed statuses are returned"
-    assert "Inactive clients are left out unless status_ids asks for the inactive status" in listing
+    # contract e15cb5a18ec2: "Default excludes Archived; when supplied, only the listed statuses are returned"
+    assert "Archived clients are left out unless status_ids asks for status 4" in listing
     assert "never listed" not in listing
     assert "fit in one page" not in listing
     create = flat(clients_module.create_client.__doc__)
@@ -253,8 +253,8 @@ def test_the_docstrings_carry_the_documented_facts():
     assert "Custom fields: ids from get_client's CustomProperties, values are text whatever the Type" in update
     # a field that already held a value read IsSet true before the update, so the answer cannot prove an ignored one:
     # the model compares the returned Values itself (there is no read before the write)
-    assert "Compare each returned CustomProperties Value with what you sent; tell the user if one differs (Gorelo may reformat)" in update
-    assert "Update a client's name, status, billing name, alternate name or custom fields" in update
+    assert "Compare readable returned values with what you sent (Gorelo may reformat)" in update
+    assert "Update a client and return its record" in update
     # contract 1b1c0cec0e9a: the single record has the custom fields, the list rows leave them out
     assert "Rows leave out CustomProperties: get_client has them" in listing
     record = flat(clients_module.get_client.__doc__)
@@ -271,14 +271,14 @@ def test_the_inactive_client_promise_is_the_one_in_the_spec_text():
     since contract e15cb5a18ec2 it says they are excluded only when StatusIds is omitted."""
     parameters = json.loads(LATEST_SPEC.read_text(encoding="utf-8"))["paths"]["/v1/clients"]["get"]["parameters"]
     text = " ".join(next(p for p in parameters if p["name"] == "StatusIds")["description"].split())
-    assert "when omitted, inactive (2) clients are excluded, and when supplied only the listed statuses are returned" in text
+    assert "Default excludes Archived; when supplied, only the listed statuses are returned" in text
     assert "either way" not in text
 
 
 async def test_the_status_ids_description_says_what_omitting_it_does(server):
     tool = next(t for t in await list_tools(server) if t.name == "list_clients")
     text = flat(tool.inputSchema["properties"]["status_ids"]["description"])
-    assert "Omit it and inactive clients (status 2) are left out; give it and only those statuses are returned." in text
+    assert "Omitted excludes Archived; supplied returns only those statuses." in text
     assert "no lookup tool" in text
 
 
@@ -286,8 +286,8 @@ async def test_the_status_id_description_says_an_inactive_status_hides_the_clien
     #
     tool = next(t for t in await list_tools(server) if t.name == "update_client")
     text = flat(tool.inputSchema["properties"]["status_id"]["description"])
-    assert "An inactive status hides the client from default lists like a delete does" in text
-    assert "its devices drop out of list_agents" in text
+    assert "Archived hides the client from default lists" in text
+    assert "its devices from list_agents" in text
     assert "Status.Id" in text and "no lookup tool" in text
 
 
@@ -3124,3 +3124,57 @@ async def test_the_optional_parameters_default_to_null_without_advertising_a_nul
     assert [p for p, definition in props.items() if "default" in definition] == ["page_size"]
     assert not tool.inputSchema.get("required")
     assert all("anyOf" not in p for p in props.values())
+
+
+@pytest.mark.parametrize('was_set', [False, True])
+async def test_hidden_custom_field_write_checks_is_set_and_reports_unverifiable_value(server, mock_gorelo, was_set):
+    arguments = {'custom_properties': [{'id': 5, 'value': 'new secret'}]}
+    prior = [custom_property(5, is_set=was_set, value=None, IsHidden=True)]
+    after = client_record(CustomProperties=[custom_property(5, value=None, IsHidden=True)])
+    route_update(mock_gorelo, arguments, envelope({'Id': 9101}), prior=prior, after=after)
+    result = await call_tool(server, 'update_client', {'client_id': 9101, **arguments})
+    assert result['CustomProperties'] == after['CustomProperties']
+    assert 'values cannot be compared or verified' in result['warning']
+    assert 'new secret' not in result['warning']
+    assert len(mock_gorelo.calls('PATCH', CLIENT_9101)) == 1
+
+
+async def test_hidden_custom_field_write_still_fails_if_not_saved(server, mock_gorelo):
+    arguments = {'custom_properties': [{'id': 5, 'value': 'new secret'}]}
+    rows = [custom_property(5, is_set=False, value=None, IsHidden=True)]
+    route_update(mock_gorelo, arguments, envelope({'Id': 9101}), prior=rows,
+                 after=client_record(CustomProperties=rows))
+    text = await call_tool_error(server, 'update_client', {'client_id': 9101, **arguments})
+    assert 'IsSet is not true' in text
+    assert 'new secret' not in text
+
+
+async def test_hidden_custom_field_can_be_cleared_and_confirmed(server, mock_gorelo):
+    arguments = {'clear_custom_property_ids': [5]}
+    prior = [custom_property(5, value=None, IsHidden=True)]
+    after = client_record(CustomProperties=[custom_property(5, is_set=False, value=None, IsHidden=True)])
+    route_update(mock_gorelo, arguments, envelope({'Id': 9101}), prior=prior, after=after)
+    assert await call_tool(server, 'update_client', {'client_id': 9101, **arguments}) == after
+    assert mock_gorelo.calls('PATCH', CLIENT_9101)[0].json == {'CustomProperties': [{'Id': 5, 'Value': None}]}
+
+
+async def test_hidden_previous_values_are_never_described_as_empty_or_offered_for_restoration(server, mock_gorelo):
+    arguments = {'custom_properties': [{'id': 5, 'value': 'new'}]}
+    prior = [custom_property(5, is_set=False, value=None), custom_property(6, value=None, IsHidden=True)]
+    after = client_record(CustomProperties=[custom_property(5, value='new'),
+                                           custom_property(6, is_set=False, value=None, IsHidden=True)])
+    route_update(mock_gorelo, arguments, envelope({'Id': 9101}), prior=prior, after=after)
+    text = await call_tool_error(server, 'update_client', {'client_id': 9101, **arguments})
+    assert 'was set to a value hidden from the API' in text
+    assert 'previous values cannot be recovered' in text
+    assert 'Do not clear them or substitute an empty value' in text
+    assert 'was set to an empty value' not in text
+    assert 'clear_custom_property_ids=[6]' not in text
+
+
+@pytest.mark.parametrize('hidden,value', [('yes', None), (True, 'unexpected secret')])
+async def test_invalid_hidden_custom_field_reads_stop_before_patch(server, mock_gorelo, hidden, value):
+    route_read(mock_gorelo, envelope(client_record(CustomProperties=[custom_property(5, value=value, IsHidden=hidden)])))
+    text = await call_tool_error(server, 'update_client', {'client_id': 9101, 'custom_properties': [{'id': 5, 'value': 'new'}]})
+    assert 'unexpected secret' not in text
+    assert not mock_gorelo.calls('PATCH', CLIENT_9101)

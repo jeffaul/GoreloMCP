@@ -77,8 +77,8 @@ Allowlist (write mode). "Run-created" means the id is in the manifest of this ru
     POST /assets/custom           only with allow_custom_assets=True (write_matrix --with-custom-assets) and never from
                                   a cleanup; ClientId is the test client; Name starts with the run id (MCPTEST-...)
     PATCH /assets/custom/{customAssetId}  only with allow_custom_assets=True; the path id is a custom asset this run
-                                  created; ClientId is required and is the test client, or the second client (the one
-                                  negative check of the custom_assets area sends a wrong client on purpose and expects
+                                  created; ClientId may be omitted or be the test client only (a different client
+                                  would now move the asset, so no cross-client probe is allowed; the old test expected
                                   Gorelo to refuse it); Name, if present, starts with the run id
     GET /assets/custom/hardware-types  a plain read
     DELETE /assets/custom/{customAssetId}  never (a custom asset cannot be removed through the API)
@@ -253,6 +253,12 @@ _NEVER: dict[str, str] = {
     "DELETE /v1/contracts/{contractId}": "the live harness never deletes contracts",
     "POST /v1/payments": "the live harness never records payments (a payment is accounting data that reaches the connected system)",
     "DELETE /v1/payments/{paymentId}": "the live harness never deletes payments (a payment is accounting data)",
+    'POST /v1/documents': "the live harness never changes documents",
+    'PATCH /v1/documents/{documentId}': "the live harness never changes documents",
+    'POST /v1/documents/{documentId}/duplicate': "the live harness never changes documents",
+    'POST /v1/documents/{documentId}/versions/{versionId}/restore': "the live harness never changes documents",
+    'POST /v1/documents/{documentId}/related-items': "the live harness never changes documents",
+    'DELETE /v1/documents/{documentId}/related-items/{relatedItemId}': "the live harness never changes documents",
 }
 
 # _NEVER is looked up by the SHAPE of the operation (placeholders written {}), so renaming a placeholder in a
@@ -1457,20 +1463,15 @@ class LiveGuard:
 
     @_rule(
         "PATCH /v1/assets/custom/{customAssetId}",
-        "only with allow_custom_assets; ClientId is required and is the test client (or the second client, for the one "
-        "negative check); Name, if present, starts with the run id",
+        "only with allow_custom_assets; ClientId omitted or the test client only; Name, if present, starts with the run id",
     )
     def _patch_custom_asset(self, req: _Req) -> None:
         # the path id was already checked to be a custom asset this run created (_PATH_KINDS)
         if not self.allow_custom_assets or self.cleanup:
             raise req.block("custom assets cannot be changed unless the run enabled the custom_assets area (--with-custom-assets)")
         client = self._scalar_int(req, "ClientId")
-        if client is None:
-            raise req.block(f"ClientId is required and must be {self.test_client} (the test client)")
-        if client != self.test_client:
-            second = sorted(self.allowed_clients - {self.test_client})
-            if client not in second:
-                raise req.block(f"ClientId must be {self.test_client} (the test client), not {client}")
+        if client is not None and client != self.test_client:
+            raise req.block(f"ClientId must be {self.test_client} (the test client), not {client}; the harness never moves assets")
         self._require_run_name(req, required=False)
 
     def _require_run_name(self, req: _Req, *, required: bool = True) -> None:

@@ -53,13 +53,12 @@ Areas, in this order (--only takes a comma separated list and keeps this order; 
                location (list_client_locations), create_custom_asset (name `<run id>-asset`, a serial number, ip 192.0.2.10 from
                the TEST-NET-1 documentation range and a warranty date), update_custom_asset (new name suffix, ip 192.0.2.11, a
                description), then clear_fields description, ip_address and warranty_end_date (they must read back null or
-               empty), and a negative check: update_custom_asset with the second client as client_id must be refused by Gorelo
-               with HTTP 400 (an accepted one, or any other answer, fails the area; an accepted or unknown outcome records the second client, or
-               "unknown", as the asset's client in the manifest, and the residue text and the reminder name it). SKIPPED unless --with-custom-assets is given (and also
-               skipped, with the same reason, under --only custom_assets without it: its tools cannot even be called then).
-               A custom asset CANNOT BE DELETED through the API (DELETE /v1/assets/custom/{id} is forbidden, and there is no GET
-               of one asset), so this area leaves a residue: the asset stays on the test client until somebody removes it in
-               the Gorelo app. The manifest records it before and after the create; the cleanup sends nothing for it and
+               empty), and a negative check: an explicit move with no destination location must fail locally,
+               with no HTTP request. A different ClientId can now move the asset, so that old probe is never sent.
+               SKIPPED unless --with-custom-assets is given (and also skipped under --only custom_assets without it).
+               A custom asset CANNOT BE DELETED through this server, so this area leaves a residue: the asset stays on the
+               test client until somebody removes it in the Gorelo app. The manifest records it before and after the create;
+               the cleanup sends nothing for it and
                reports it as a known undeletable record (CUSTOM_ASSET_RESIDUE), and the summary prints a line telling the
                operator to remove it in the Gorelo app. Never part of a default run
     custom_properties
@@ -271,7 +270,6 @@ Live requests per area (method and spec path, in the order they are sent; the te
         GET /v1/assets/custom  # update_custom_asset reads the row back
         PATCH /v1/assets/custom/{customAssetId}  # clear_fields description, ip_address, warranty_end_date
         GET /v1/assets/custom
-        PATCH /v1/assets/custom/{customAssetId}  # negative check: the second client as ClientId, Gorelo must answer HTTP 400
     custom_properties:
         GET /v1/clients/{clientId}  # get_client of the test client: its custom fields (only with --with-custom-properties)
         GET /v1/clients/{clientId}  # update_client reads the client first: every Id it sends must be one of its custom fields
@@ -1741,7 +1739,7 @@ async def area_items(m: Matrix) -> None:
 
 
 async def area_custom_assets(m: Matrix) -> None:
-    """One custom asset on the test client: created, changed, cleared, and refused when a wrong client is named.
+    """One custom asset on the test client: created, changed, cleared, with an incomplete move refused locally.
 
     The asset CANNOT be deleted through the API, so the area leaves it behind on purpose (see CUSTOM_ASSET_RESIDUE): it is
     recorded in the manifest before and after the create, and the cleanup reports it as a known residue."""
@@ -1816,32 +1814,18 @@ async def area_custom_assets(m: Matrix) -> None:
     expect("update_custom_asset Name (left alone by clear_fields)", cleared.get("Name"), renamed)
     expect("update_custom_asset SerialNumber (left alone by clear_fields)", cleared.get("SerialNumber"), serial)
 
-    # The negative check: Gorelo must refuse a client that does not own the asset, with HTTP 400. The second client is the only
-    # other client the guard lets the PATCH name; the name sent is the current one, but the ClientId itself is the change: an
-    # (unexpected) acceptance MOVES the asset to the second client. So the manifest details say where the asset may be.
+    # A different ClientId now moves an asset. Test the local move guard with an
+    # incomplete destination instead; no cross-client PATCH may reach Gorelo.
+    before_requests = m.pacer.requests
     try:
-        await m.tool("update_custom_asset", custom_asset_id=asset_id, client_id=SITE.second_client, name=renamed)
+        await m.tool("update_custom_asset", custom_asset_id=asset_id, client_id=SITE.test_client,
+                     move_to_client_id=SITE.second_client)
     except ToolFailed as exc:
-        if exc.sent and exc.status == 400 and exc.rejected:
-            m.note(f"update_custom_asset with another client_id: refused by Gorelo (HTTP {exc.status})")
+        if not exc.sent and "location_id" in exc.text and m.pacer.requests == before_requests:
+            m.note("incomplete asset move refused locally; no request sent and the asset stays on the test client")
             return
-        if exc.sent and not exc.rejected:  # a 5xx, a timeout or an unconfirmed write: Gorelo may have processed it
-            m.manifest.update_details("custom_asset", asset_id, client_id=CUSTOM_ASSET_CLIENT_UNKNOWN)
-            where = f"unknown whether the asset moved to client {SITE.second_client}; look for {label!r} in the Gorelo app"
-            m.note(f"update_custom_asset with another client_id: outcome unknown ({exc.text[:80]}); {where}")
-            raise CheckFailed(f"update_custom_asset with another client was unexpected: {exc.text[:120]} ({where})") from None
-        # not sent (a local validation error) or a 4xx other than 400 (401, 403, 404, 429, ...): Gorelo did not process it
-        status = f"HTTP {exc.status}" if exc.status is not None else "no HTTP answer"
-        raise CheckFailed(
-            f"update_custom_asset with another client was not refused by Gorelo with HTTP 400, so the negative check was not "
-            f"evaluated ({status}): {exc.text[:120]} (the asset stays on the test client)"
-        ) from None
-    m.manifest.update_details("custom_asset", asset_id, client_id=SITE.second_client)
-    m.note(f"custom asset {asset_id} MOVED to client {SITE.second_client}: {custom_asset_residue(SITE.second_client)}")
-    raise CheckFailed(
-        "update_custom_asset with another client_id was ACCEPTED by Gorelo (the asset may now belong to client "
-        f"{SITE.second_client}; look for {label!r} in the Gorelo app)"
-    )
+        raise CheckFailed(f"incomplete asset move was not safely refused before HTTP: {exc.text[:120]}") from None
+    raise CheckFailed("incomplete asset move was unexpectedly accepted")
 
 
 def client_fields(record: dict[str, Any], tool: str) -> list[dict[str, Any]]:

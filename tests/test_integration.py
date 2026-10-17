@@ -100,6 +100,20 @@ EXCLUDED_OPS = {
     # shows who holds keys, the DELETE revokes one, and POST /v1/api-keys, which mints one, is forbidden).
     "GET /v1/api-keys",
     "DELETE /v1/api-keys/{apiKeyId}",
+    'GET /v1/assets/custom/{customAssetId}',
+    'GET /v1/deletions',
+    'GET /v1/documents',
+    'POST /v1/documents',
+    'GET /v1/documents/{documentId}',
+    'PATCH /v1/documents/{documentId}',
+    'POST /v1/documents/{documentId}/duplicate',
+    'GET /v1/documents/{documentId}/pdf',
+    'GET /v1/documents/{documentId}/versions',
+    'GET /v1/documents/{documentId}/versions/{versionId}',
+    'POST /v1/documents/{documentId}/versions/{versionId}/restore',
+    'GET /v1/documents/{documentId}/related-items',
+    'POST /v1/documents/{documentId}/related-items',
+    'DELETE /v1/documents/{documentId}/related-items/{relatedItemId}',
 }
 
 # The operations the 2026-10-12 contract added with a tool, and which tools declare each. The custom asset list is
@@ -155,7 +169,7 @@ def test_every_spec_operation_is_covered_or_deliberately_excluded(spec_index):
     assert not declared & EXCLUDED_OPS
     uncovered = set(spec_index.ops) - declared - forbidden - EXCLUDED_OPS
     assert uncovered == set(), sorted(uncovered)
-    assert len(spec_index.ops) == 103
+    assert len(spec_index.ops) == 117
     assert not any("/v1/payments" in op for op in declared)  # payments are recorded money: no tool reaches them
 
 

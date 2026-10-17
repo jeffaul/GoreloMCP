@@ -81,15 +81,16 @@ SEVERITY_NAMES = {1: "Critical", 2: "Error", 3: "Warning", 4: "Information"}
 SEVERITIES = tuple(SEVERITY_NAMES)
 SEVERITY_HELP = "1 Critical, 2 Error, 3 Warning, 4 Information"
 
-# GET /v1/alerts StatusIds: "New=1, Ignored=2, Ticketed=3. 0 (Unknown) matches any other status." The tool offers the
+# GET /v1/alerts StatusIds: "New=1, Dismissed=2, Ticketed=3. 0 (Unknown) matches any other status." The tool offers the
 # three named statuses as words; 0 is not offered, because it only matches a status this scale cannot name.
+# Keep the existing MCP input "ignored" as an alias for Gorelo's renamed Dismissed status.
 ALERT_STATUS_IDS = {"new": 1, "ignored": 2, "ticketed": 3}
 STATUS_NAMES = ", ".join(repr(name) for name in ALERT_STATUS_IDS)
 # GET /v1/alerts TypeIds, as the spec text of that parameter lists them. "7-17 are device-check alerts, identified by
 # their check type rather than by how the alert was raised. 18-20 carry no device or check; Contract and Domain carry a
-# subject id, Warranty does not. 0 (Unknown) matches an alert this scale cannot name."
+# subject id, Warranty does not. 0 (N/A) matches an alert this scale cannot name."
 ALERT_TYPES = {
-    0: "Unknown",
+    0: "N/A",
     1: "Uptime",
     2: "API",
     3: "Script",
@@ -230,7 +231,7 @@ def _type_filter(values: Any) -> list[int] | None:
         if isinstance(item, bool) or not isinstance(item, int) or item not in ALERT_TYPES:
             shown = item if isinstance(item, int) and not isinstance(item, bool) else describe_value(item)
             raise ValueError(
-                f"type_ids[{position}]: {shown} is not an alert type id; valid ids: 0 Unknown, "
+                f"type_ids[{position}]: {shown} is not an alert type id; valid ids: 0 N/A, "
                 + ", ".join(f"{key} {name}" for key, name in ALERT_TYPES.items() if key)
             )
     return list(dict.fromkeys(values))
@@ -250,7 +251,7 @@ def _instant(text: str) -> datetime:
 async def list_alerts(
     ctx: Context,
     status: Annotated[
-        list[Literal["new", "ignored", "ticketed"]] | None, Field(description="Omit for every status.")
+        list[Literal["new", "ignored", "ticketed"]] | None, Field(description="new, ignored (Gorelo Dismissed), ticketed. Omit for every status.")
     ] = None,
     type_ids: Annotated[
         list[StrictId] | None, Field(description="Alert type ids, named in the tool text. 0 matches a type with no name.")

@@ -694,7 +694,7 @@ async def get_task_approval(
         str, Field(description="Id of an Approval row in list_task_conversations.")
     ],
 ) -> dict:
-    """Get one approval on a task with its approvers. This is where the approval status lives: Disapproved as soon as anyone disapproves, Approved once everyone approves, Pending otherwise. list_task_conversations does not carry it."""
+    """Get one approval on a task with its approvers. This is where the approval status lives: Denied as soon as anyone denies, Approved once everyone approves, Pending otherwise. list_task_conversations does not carry it."""
     ids = {**_task_ids(project_id, task_id), "approvalId": guid("approval_id", approval_id)}
     data = await client_of(ctx).get_one(GET_APPROVAL, path_params=ids, tool="get_task_approval")
     return expect_object(data, GET_APPROVAL, tool="get_task_approval")

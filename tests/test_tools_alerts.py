@@ -550,9 +550,11 @@ def test_the_type_and_status_tables_are_the_ones_in_the_spec_text():
     types = {int(number): name.strip() for name, number in re.findall(r"([A-Za-z][A-Za-z ]*?)=(\d+)", text("TypeIds"))}
     assert types == {key: name for key, name in alerts_module.ALERT_TYPES.items() if key}
     assert len(types) == 20
-    assert "0 (Unknown) matches an alert this scale cannot name" in text("TypeIds") and alerts_module.ALERT_TYPES[0] == "Unknown"
+    assert "0 (N/A) matches an alert this scale cannot name" in text("TypeIds") and alerts_module.ALERT_TYPES[0] == "N/A"
     statuses = {name.lower(): int(number) for name, number in re.findall(r"([A-Za-z]+)=(\d+)", text("StatusIds"))}
-    assert statuses == alerts_module.ALERT_STATUS_IDS == {"new": 1, "ignored": 2, "ticketed": 3}
+    assert statuses == {"new": 1, "dismissed": 2, "ticketed": 3}
+    assert alerts_module.ALERT_STATUS_IDS == {"new": 1, "ignored": 2, "ticketed": 3}
+    assert statuses["dismissed"] == alerts_module.ALERT_STATUS_IDS["ignored"]
     # A fact about the SPEC, kept as the spec words it. Production contradicts it (2026-10-04: a Script alert whose
     # ClientId is null was returned for ClientIds=9102 through its device's client), so the text of the tool follows
     # the live behavior and does not repeat this sentence (see the client_ids text test above).
@@ -665,7 +667,7 @@ async def test_type_ids_on_the_published_scale_are_sent_as_given(full_server, mo
 async def test_the_type_table_covers_the_documented_scale_and_nothing_else():
     assert sorted(alerts_module.ALERT_TYPES) == list(range(0, 21))
     assert alerts_module.ALERT_TYPES[1] == "Uptime" and alerts_module.ALERT_TYPES[4] == "External"
-    assert alerts_module.ALERT_TYPES[20] == "Contract Expiration" and alerts_module.ALERT_TYPES[0] == "Unknown"
+    assert alerts_module.ALERT_TYPES[20] == "Contract Expiration" and alerts_module.ALERT_TYPES[0] == "N/A"
     assert alerts_module.ALERT_STATUS_IDS == {"new": 1, "ignored": 2, "ticketed": 3}
 
 
@@ -819,7 +821,7 @@ LOCAL_LIST_ERRORS = [
     pytest.param({"status": [1]}, "status: expected one of 'new', 'ignored', 'ticketed', got a number", id="numeric-status"),
     pytest.param({"type_ids": []}, "type_ids: expected at least one id, got an empty list (omit type_ids if you have none to give)", id="empty-type-ids"),
     pytest.param({"type_ids": 4}, "type_ids: expected a list of ids such as [1, 4], got a number", id="type-ids-not-a-list"),
-    pytest.param({"type_ids": [1, 21]}, "type_ids[1]: 21 is not an alert type id; valid ids: 0 Unknown, 1 Uptime, 2 API", id="type-21"),
+    pytest.param({"type_ids": [1, 21]}, "type_ids[1]: 21 is not an alert type id; valid ids: 0 N/A, 1 Uptime, 2 API", id="type-21"),
     pytest.param({"type_ids": [-1]}, "type_ids[0]: -1 is not an alert type id", id="negative-type"),
     pytest.param({"type_ids": [True]}, "type_ids[0]: a boolean is not an alert type id", id="bool-type"),
     pytest.param({"type_ids": ["4"]}, "type_ids[0]: a string is not an alert type id", id="text-type"),

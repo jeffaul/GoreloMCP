@@ -44,7 +44,7 @@ GET_OP = "GET /v1/contracts/{contractId}"
 
 # snake_case tool parameter -> Gorelo query name. The same map turns a Gorelo PropertyName back into the
 # parameter to fix in error messages.
-LIST_FIELDS = {"client_ids": "ClientIds", "page_size": "PageSize", "cursor": "Cursor"}
+LIST_FIELDS = {"status_ids": "StatusIds", "client_ids": "ClientIds", "page_size": "PageSize", "cursor": "Cursor"}
 
 
 @gorelo_tool(toolset="billing", kind="read", ops=[LIST_OP], field_map=LIST_FIELDS)
@@ -53,16 +53,20 @@ async def list_contracts(
     client_ids: Annotated[list[StrictId] | None, Field(description="Client ids (list_clients).")] = None,
     page_size: Annotated[int, Field(description="Rows per page, 1-200.")] = 50,
     cursor: Annotated[str | None, Field(description="next_cursor from the previous page.")] = None,
+    status_ids: Annotated[list[StrictId] | None, Field(description="1 Active, 2 Expired, 3 Archived. Omitted returns Active and Expired.")] = None,
 ) -> dict:
     """List billing contracts with their service lines, one page at a time.
 
-    A service line's Id is the service_line_id of create_time_entry and update_time_entry. Expired and archived contracts are listed too: keep Status Active for live ones. get_contract has the line items and labor detail.
+    A service line's Id is the service_line_id of create_time_entry and update_time_entry. Active and expired contracts are listed by default; status_ids can include archived ones. get_contract has the line items and labor detail.
     Paging: pass next_cursor back as cursor with the SAME filters until has_more is false.
     """
-    filters: dict[str, Any] = {"client_ids": positive_ids("client_ids", client_ids)}
+    filters: dict[str, Any] = {"client_ids": positive_ids("client_ids", client_ids), "status_ids": positive_ids("status_ids", status_ids)}
+    for value in filters["status_ids"] or []:
+        if value not in (1, 2, 3):
+            raise ValueError("status_ids: expected 1 Active, 2 Expired or 3 Archived")
     non_empty("cursor", cursor)
     size = clamp_page_size(page_size)
-    params = {"ClientIds": csv_ids("client_ids", filters["client_ids"])}
+    params = {"ClientIds": csv_ids("client_ids", filters["client_ids"]), "StatusIds": csv_ids("status_ids", filters["status_ids"])}
     page = await client_of(ctx).get_page(LIST_OP, query=params, page_size=size, cursor=cursor, tool="list_contracts")
     return paged_result(page, filters)
 

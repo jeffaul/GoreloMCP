@@ -226,7 +226,6 @@ LIST_COMMENTS_MAP = {
 }
 CREATE_COMMENT_MAP = {
     "body": "Body",
-    "body_text": "BodyText",
     "conversation_type": "ConversationTypeId",
     "conversation_id": "ConversationId",
     "attachments": "Attachments",
@@ -973,7 +972,6 @@ async def create_project_comment(
     task_id: Annotated[
         str | None, Field(description="Task id (list_project_tasks): comment on that task instead.")
     ] = None,
-    body_text: Annotated[str | None, Field(description="The same body as markdown, if you keep one.")] = None,
     conversation_type: Annotated[
         ConversationKind,
         Field(
@@ -1036,7 +1034,6 @@ async def create_project_comment(
     payload = build_body(
         {
             "body": body,
-            "body_text": body_text,
             "conversation_type": CONVERSATION_TYPE_IDS[conversation_type],
             "conversation_id": conv_id,
             "attachments": _attachments(attachments),

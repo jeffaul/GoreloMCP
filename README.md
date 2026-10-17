@@ -17,6 +17,8 @@ A self-hosted server that lets Claude (on claude.ai) work with your Gorelo PSA. 
 
 ## What's new in 1.2.0
 
+The October 16 compatibility update removes the retired project-comment BodyText input, handles hidden custom fields without treating them as empty, and separates explicit custom-asset moves (move_to_client_id) from ordinary edits. It follows the API description of 2026-10-16.
+
 Version 1.2.0 adds custom fields. Claude can read the custom fields of a client (`get_client`) and of a device (`get_agent`), and set or clear the custom fields of a client (`update_client`). Gorelo's lists leave custom fields out, so Claude reads them from the single client or device. This version follows Gorelo's API description of 2026-10-14. Custom fields have not been tested against a live Gorelo account yet. Version 1.1.0 added custom assets (list, create, update). See [CHANGELOG.md](CHANGELOG.md).
 
 ## What it does not do, and how it stays safe
