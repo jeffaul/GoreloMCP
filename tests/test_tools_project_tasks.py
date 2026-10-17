@@ -285,7 +285,7 @@ def test_the_values_offered_are_exactly_the_ones_the_spec_text_allows(param, spe
 
 @needs_spec_text
 def test_the_status_and_priority_ids_in_the_descriptions_match_the_spec_text():
-    assert "NotStarted=1, WorkingOnIt=2, OnHold=3, Done=4" in param_text("get", "/v1/projects/{projectId}/tasks", "StatusIds")
+    assert "1 Not started, 2 Working on it, 3 On hold, 4 Done" in param_text("get", "/v1/projects/{projectId}/tasks", "StatusIds")
     for tool, param in (("list_project_tasks", "status_ids"), ("create_project_task", "status_id"), ("update_project_task", "status_id")):
         assert "1 NotStarted, 2 WorkingOnIt, 3 OnHold, 4 Done" in param_description(tool, param)
     create = spec_text("post", "/v1/projects/{projectId}/tasks")
@@ -353,7 +353,7 @@ def test_the_documented_rules_the_docstrings_repeat_are_in_the_spec_text():
     approval = spec_text("post", "/v1/projects/{projectId}/tasks/{taskId}/conversations/approval")
     assert "active contact of the task's client **and** carry a contact tag marked as an approver" in approval
     assert "puts the task in a waiting-on-the-contact state" in approval
-    assert "Disapproved as soon as anyone disapproves" in spec_text("get", "/v1/projects/{projectId}/tasks/{taskId}/approvals/{approvalId}")
+    assert "Denied as soon as anyone denies" in spec_text("get", "/v1/projects/{projectId}/tasks/{taskId}/approvals/{approvalId}")
     assert "null `Id`" in spec_text("get", "/v1/projects/{projectId}/tasks/{taskId}/conversations")
     assert "assignedToMe` is not offered" in spec_text("get", "/v1/projects/{projectId}/tasks")
     assert "The conversation is created empty" in spec_text("post", "/v1/projects/{projectId}/tasks/{taskId}/conversations/side-conversation")
@@ -370,7 +370,7 @@ def test_the_create_task_parameter_texts_match_the_field_texts_of_the_schema():
     # 2026-10-02: SectionId is required next to Title; the defaults the descriptions state are the schema's.
     fields = schema_fields("CreateTaskCommand")
     assert fields["SectionId"].endswith("Required.") and fields["Title"].endswith("Required.")
-    assert "Defaults to NotStarted" in fields["StatusId"] and "NotStarted=1, WorkingOnIt=2, OnHold=3, Done=4" in fields["StatusId"]
+    assert "Defaults to 1 Not started" in fields["StatusId"] and "1 Not started, 2 Working on it, 3 On hold, 4 Done" in fields["StatusId"]
     assert "Defaults to Normal" in fields["PriorityId"]
     assert fields["LeadAssigneeId"].endswith("Optional.")
     assert "Display name to record as the task creator" in fields["CreatedByName"]
@@ -1376,7 +1376,8 @@ ID_EXPECTED = "expected a positive whole number such as 123"
 
 def documented_scale(text):
     """{id: label} of every "Label=N" pair of a spec text (spaces inside a label dropped: "Not Started" is NotStarted)."""
-    return {int(number): label.replace(" ", "") for label, number in re.findall(r"([A-Za-z][A-Za-z ]*)=(\d+)", text)}
+    pairs = re.findall(r"\b([1-4]) (Not started|Working on it|On hold|Done)", text)
+    return {int(number): ''.join(word.capitalize() for word in label.split()) for number, label in pairs}
 
 
 @needs_spec_text
@@ -1949,5 +1950,5 @@ async def test_get_task_approval_unknown_approval_is_a_404(server, mock_gorelo):
 
 def test_get_task_approval_docstring_says_this_is_where_the_status_lives():
     doc = " ".join(specs()["get_task_approval"].fn.__doc__.split())
-    for fragment in ("This is where the approval status lives", "Disapproved as soon as anyone disapproves", "Approved once everyone approves", "Pending otherwise"):
+    for fragment in ("This is where the approval status lives", "Denied as soon as anyone denies", "Approved once everyone approves", "Pending otherwise"):
         assert fragment in doc, fragment

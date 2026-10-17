@@ -83,17 +83,17 @@ def _walk_keys(node, path=""):
 # --------------------------------------------------------------------------
 
 
-def test_op_count_is_103(index, ops):
+def test_op_count_is_117(index, ops):
     # 96 operations in contract e15cb5a18ec2 (2026-10-02); the 2026-10-08 spec (contract 56005ff28330) added POST /v1/payments and
     # DELETE /v1/payments/{paymentId}; the 2026-10-12 spec (contract bce2fad59937) added GET /v1/api-keys, DELETE /v1/api-keys/{apiKeyId},
     # POST /v1/assets/custom, PATCH /v1/assets/custom/{customAssetId} and GET /v1/assets/custom/hardware-types; the 2026-10-14 spec
     # (contract 1b1c0cec0e9a) added no operation: it added custom properties to the client and device records and to the client update
-    assert index["op_count"] == 103
-    assert len(ops) == 103
-    assert index["contract_sha256"].startswith("1b1c0cec0e9a")
+    assert index["op_count"] == 117
+    assert len(ops) == 117
+    assert index["contract_sha256"].startswith("a7954b24844b")
     # 252 schemas on 2026-10-01, 268 on 2026-10-02, 274 on 2026-10-08, 286 on 2026-10-12; the 2026-10-14 spec added two:
     # CustomPropertyUpdate and CustomPropertyValue
-    assert len(index["schemas"]) == 288
+    assert len(index["schemas"]) == 310
 
 
 def test_index_has_no_description_or_summary_keys(index):
@@ -133,8 +133,8 @@ def test_page_size_is_rejected_not_clamped(ops, key):
     assert ops[key]["page_size_rule"] == "reject"
 
 
-def test_exactly_20_ops_are_paged_and_paged_means_cursor(ops):
-    assert sum(1 for op in ops.values() if op["paged"]) == 20  # GET /v1/alerts is the 19th (2026-10-02), GET /v1/api-keys the 20th (2026-10-12)
+def test_exactly_23_ops_are_paged_and_paged_means_cursor(ops):
+    assert sum(1 for op in ops.values() if op["paged"]) == 23  # GET /v1/alerts is the 19th (2026-10-02), GET /v1/api-keys the 20th (2026-10-12)
     assert ops["GET /v1/api-keys"]["paged"] is True
     for key, op in ops.items():
         assert op["paged"] == ("Cursor" in op["query_params"]), key
@@ -200,6 +200,7 @@ def test_custom_properties_are_returned_on_the_single_client_and_device_and_set_
         "Type": {"ref": "CodeModel", "type": None, "nullable": False},
         "Value": {"type": "string", "nullable": True},  # the effective value, always text whatever Type is
         "IsSet": {"type": "boolean", "nullable": False},
+        "IsHidden": {"type": "boolean", "nullable": False},
     }
     values = {"type": "array", "nullable": False, "items": {"ref": "CustomPropertyValue", "type": None}}
     for single, row in (("ClientResponse", "ClientListItemResponse"), ("DeviceResponse", "DeviceListItemResponse")):
@@ -278,7 +279,7 @@ def test_every_request_body_of_the_live_spec_is_an_object(ops):
     # "format" or "items"); if one appears, Gorelo added a new body shape: read the
     # build warnings and the spec_diff.py report before relying on body["fields"].
     bodies = {key: op["body"] for key, op in ops.items() if op["body"] is not None}
-    assert len(bodies) == 33
+    assert len(bodies) == 37
     for key, body in bodies.items():
         assert not {"type", "format", "items"} & set(body), key
 
@@ -375,14 +376,14 @@ def test_live_spec_rejects_unknown_fields_on_every_object_schema(schemas):
     # added CustomPropertyUpdate and CustomPropertyValue; 270 until the 2026-10-12 spec, 264 before the payments schemas of
     # 2026-10-08), plus the free-form DataContext property that 77 response schemas carry. The other four schemas are enums.
     objects = {name: schema for name, schema in schemas.items() if schema["type"] == "object"}
-    assert len(objects) == 284
+    assert len(objects) == 306
     assert [name for name, schema in objects.items() if schema.get("additional_properties") is not False] == []
     assert {"CustomPropertyUpdate", "CustomPropertyValue"} <= set(objects)  # both new schemas reject unknown fields too
     data_contexts = [
         (name, field) for name, schema in schemas.items() for field, entry in schema["fields"].items()
         if entry.get("additional_properties") is False
     ]
-    assert len(data_contexts) == 77
+    assert len(data_contexts) == 82
     assert {field for _, field in data_contexts} == {"DataContext"}
 
 
@@ -400,7 +401,7 @@ def test_index_records_every_default_constraint_and_additional_properties_of_the
         return sum(1 for node in nodes for _, key in _walk_keys(node) if key == name)
 
     raw_counts = {key: count([raw], key) for key in ("default", "minLength", "pattern", "additionalProperties")}
-    assert raw_counts == {"default": 36, "minLength": 23, "pattern": 3, "additionalProperties": 361}
+    assert raw_counts == {"default": 41, "minLength": 23, "pattern": 3, "additionalProperties": 388}
     schema_nodes = [index["schemas"]]
     param_nodes = [params for op in index["ops"].values() for params in (op["path_params"], op["query_params"])]
     assert count(param_nodes, "default") == raw_counts["default"]

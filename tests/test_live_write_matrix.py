@@ -1187,7 +1187,6 @@ GOLDEN_CUSTOM_ASSETS = [
     "GET /v1/assets/custom",
     "PATCH /v1/assets/custom/{customAssetId}",
     "GET /v1/assets/custom",
-    "PATCH /v1/assets/custom/{customAssetId}",
 ]
 # The custom_properties area (--with-custom-properties) in the happy path: update_client reads the client before every write of a
 # custom field, sends the PATCH and reads the client again (a GET, the PATCH, a GET), and checks the fields on that second read;

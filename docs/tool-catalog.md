@@ -57,7 +57,7 @@ In the default set.
 | `list_org_groups` | read | `GET /v1/organization/groups` | none | List every technician group (not paged); returns {items, count}. |
 | `list_org_users` | read | `GET /v1/organization/users` | none | List every user (technician); all pages are read for you. |
 | `post_alert` | write | `POST /v1/alerts` | `name`, `client_id`, `resource`, `severity` | Post an external alert for a client's resource; returns {"ok": true} when Gorelo accepts it. |
-| `update_client` | write (overwrites data) | `GET /v1/clients/{clientId}`, `PATCH /v1/clients/{clientId}` | `client_id` | Update a client's name, status, billing name, alternate name or custom fields; returns the updated client record. |
+| `update_client` | write (overwrites data) | `GET /v1/clients/{clientId}`, `PATCH /v1/clients/{clientId}` | `client_id` | Update a client and return its record. |
 | `update_contact` | write (overwrites data) | `GET /v1/contacts/{contactId}`, `PATCH /v1/contacts/{contactId}` | `contact_id` | Update a contact; returns the updated contact record. |
 | `update_custom_asset` | write (overwrites data) | `PATCH /v1/assets/custom/{customAssetId}`, `GET /v1/assets/custom` | `custom_asset_id`, `client_id` | Change fields of one custom asset; returns the updated row (read back from the client's list), or {Id, warning} if the read-back fails. |
 
@@ -73,7 +73,7 @@ In the default set.
 | `create_ticket_side_conversation` | write | `POST /v1/tickets/{ticketId}/conversations/side-conversation` | `ticket_id`, `name`, `email` | Create a side conversation (email thread with an outside address) on a ticket and return its Id. |
 | `delete_ticket_comment` | destructive (only when GORELO_ENABLE_DESTRUCTIVE=1) | `DELETE /v1/tickets/{ticketId}/comments/{commentId}` | `ticket_id`, `comment_id` | Delete one PRIVATE comment and return Gorelo's {Id}. |
 | `get_ticket` | read | `GET /v1/tickets/{ticketId}`, `GET /v1/tickets` | `ticket_id` | Get one ticket in full: the list fields plus Description, Time, Products, BillingOverride, Shipments, Banner and linked asset and uptime ids. |
-| `get_ticket_approval` | read | `GET /v1/tickets/{ticketId}/approvals/{approvalId}` | `ticket_id`, `approval_id` | Get one approval on a ticket with its approvers; this is where approval status lives (Pending, Approved, Disapproved: Disapproved as soon as anyone disapproves, Approved once all approve). |
+| `get_ticket_approval` | read | `GET /v1/tickets/{ticketId}/approvals/{approvalId}` | `ticket_id`, `approval_id` | Get one approval on a ticket with its approvers; this is where approval status lives (Pending, Approved, Denied: Denied as soon as anyone denies, Approved once all approve). |
 | `get_ticket_comment` | read | `GET /v1/tickets/{ticketId}/comments/{commentId}` | `ticket_id`, `comment_id` | Get one ticket comment in full (HTML body, author, attachments, email status). |
 | `list_ticket_comments` | read | `GET /v1/tickets/{ticketId}/comments` | `ticket_id` | List a ticket's comments, one page at a time. |
 | `list_ticket_conversations` | read | `GET /v1/tickets/{ticketId}/conversations` | `ticket_id` | List a ticket's conversations in one call: the Public and Private main thread (null Id) plus each side conversation and approval, whose Id is the conversation_id for comments or the approval_id for get_ticket_approval. |

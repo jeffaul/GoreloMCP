@@ -209,7 +209,7 @@ Principles that run through every layer: fail loudly (no silent empty result, no
 
 ## 4. The spec index and live overrides
 
-**The spec index.** `spec/spec_index.json` is a compact, deterministic digest of Gorelo's published OpenAPI spec: every operation (103 operations at this writing) with its method, path, query parameters, body fields, required fields, response kind and paging rule, plus every component schema. It keeps no descriptions. Its header records the source URL, `sha256` of the raw spec and `contract_sha256`, the hash of the spec without descriptions, summaries and examples. Code and tests validate against it (section 3, "Spec validation"). It is generated, never edited by hand.
+**The spec index.** `spec/spec_index.json` is a compact, deterministic digest of Gorelo's published OpenAPI spec: every operation (117 operations at this writing) with its method, path, query parameters, body fields, required fields, response kind and paging rule, plus every component schema. It keeps no descriptions. Its header records the source URL, `sha256` of the raw spec and `contract_sha256`, the hash of the spec without descriptions, summaries and examples. Code and tests validate against it (section 3, "Spec validation"). It is generated, never edited by hand.
 
 **Refreshing it.** Run `scripts/spec_snapshot.py`: it fetches the live spec, saves the raw copy as `backups/swagger-<UTC>.json`, repoints `backups/swagger-latest.json` and rewrites the index. Then run `scripts/spec_diff.py OLD NEW --out FILE` against the previous snapshot to see what changed. Then update the tools. The daily watcher (section 6) compares the live `contract_sha256` with the index and raises an alert when they differ, so a published change is noticed even if nobody looks.
 

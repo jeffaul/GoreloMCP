@@ -12,7 +12,7 @@ Ops owned by this module:
     POST /v1/assets/custom
     PATCH /v1/assets/custom/{customAssetId}
 
-Gorelo has no GET for a single custom asset, so create_custom_asset and update_custom_asset read the record back
+create_custom_asset and update_custom_asset read the record back
 by scanning GET /v1/assets/custom for the asset's client and picking the row with the written Id. The read-back
 never raises after a confirmed write: when the row is not found or the scan fails, the tool returns
 {"Id": ..., "warning": ...}.
@@ -21,9 +21,9 @@ Agents carry LocationId (renamed from ClientLocationId on 2026-08-21) and Warran
 WarrantyEndDate (replaced WarrantyExpiryDate the same day). The agent list rows are DeviceListItemResponse
 records and the single agent is a DeviceResponse. Since contract 1b1c0cec0e9a (2026-10-14) the single agent is
 the list row's fields plus CustomProperties, which the list deliberately leaves out: one entry (Id, Variable,
-Name, Type, Value, IsSet) for every custom field defined for devices. Value is the effective value (the saved
+Name, Type, Value, IsSet, IsHidden) for every custom field defined for devices. Value is the effective value (the saved
 one, else the field's default, else null), always text, and IsSet is true when a value is saved on the device.
-get_agent passes CustomProperties through unchanged; nothing writes them, because Gorelo has no operation that
+IsHidden means Value is withheld, not empty. get_agent passes CustomProperties through unchanged; nothing writes them, because Gorelo has no operation that
 updates a device. The agent list takes StatusIds; the custom asset list has no StatusIds, so list_custom_assets
 does not offer it (Gorelo rejects names an op does not declare).
 
@@ -101,7 +101,8 @@ CUSTOM_BODY_MAP = {
     "ip_address": "IpAddress",
     "serial_number": "SerialNumber",
 }
-UPDATE_CUSTOM_MAP = {**CUSTOM_BODY_MAP, "custom_asset_id": "customAssetId"}
+UPDATE_CUSTOM_MAP = {**{k: v for k, v in CUSTOM_BODY_MAP.items() if k != "client_id"},
+                     "move_to_client_id": "ClientId", "custom_asset_id": "customAssetId"}
 # Fields that Gorelo clears with a JSON null (name, location_id and hardware_type_id cannot be cleared).
 CUSTOM_CLEARABLE = ("description", "contact_id", "warranty_end_date", "ip_address", "serial_number")
 CUSTOM_CLEAR_VALUES = {param: None for param in CUSTOM_CLEARABLE}
@@ -375,14 +376,14 @@ async def update_custom_asset(
     client_id: Annotated[
         StrictId,
         Field(
-            description="The asset's CURRENT client (list_custom_assets): a safety check, since the client cannot be changed."
+            description="The asset's current client (list_custom_assets), used for read-back and checked before a move."
         ),
     ],
     name: Annotated[str | None, Field(description=f"New name, not blank, at most {NAME_MAX} characters.")] = None,
     location_id: Annotated[StrictId | None, Field(description="New location of the client (list_client_locations).")] = None,
     hardware_type_id: Annotated[StrictId | None, Field(description="New hardware type (list_custom_asset_hardware_types).")] = None,
     description: Annotated[str | None, Field(description=f"New description, at most {DESCRIPTION_MAX} characters.")] = None,
-    contact_id: Annotated[StrictId | None, Field(description="Contact to assign (list_contacts), active, of client_id. To unassign use clear_fields.")] = None,
+    contact_id: Annotated[StrictId | None, Field(description="Contact to assign (list_contacts), active, of the destination client when moving, otherwise client_id. To unassign use clear_fields.")] = None,
     warranty_end_date: Annotated[str | None, Field(description="New warranty end, YYYY-MM-DD.")] = None,
     ip_address: Annotated[str | None, Field(description="New IPv4 address, such as 10.0.0.20.")] = None,
     serial_number: Annotated[str | None, Field(description=f"New serial number, at most {SERIAL_MAX} characters.")] = None,
@@ -390,33 +391,50 @@ async def update_custom_asset(
         list[CustomClearable] | None,
         Field(description="Fields to empty (sent as null). Not together with a value for the same field."),
     ] = None,
+    move_to_client_id: Annotated[
+        StrictId | None,
+        Field(description="Explicitly move to this active client. Give its location_id and either its contact_id or clear_fields=['contact_id']. Checks current ownership first."),
+    ] = None,
 ) -> dict:
     """Change fields of one custom asset; returns the updated row (read back from the client's list), or {Id, warning} if the read-back fails. Send only what changes; at least one change besides client_id is required.
-    Name, location_id and hardware_type_id can be changed but not cleared; clear_fields empties the other five. The client cannot be changed: client_id must be its current client, so an asset with no client cannot be updated here.
+    Name, location_id and hardware_type_id can be changed but not cleared; clear_fields empties the other five. Ordinary edits never send ClientId. To move an asset, explicitly pass move_to_client_id, a destination location_id, and either a destination contact_id or clear_fields containing contact_id. client_id is the expected current owner, checked before a move.
     Resolve ids first: custom_asset_id and client_id -> list_custom_assets, location_id -> list_client_locations, hardware_type_id -> list_custom_asset_hardware_types.
-    Side effects: overwrites or clears stored values. This server cannot delete custom assets.
+    Side effects: overwrites or clears stored values; move_to_client_id transfers the asset to another client. This server cannot delete custom assets.
     """
     asset_id = guid("custom_asset_id", custom_asset_id)
+    current_client_id = positive_id("client_id", client_id)
+    destination_id = _optional_id("move_to_client_id", move_to_client_id)
     clear = _clear_names(clear_fields)
     values = _custom_values(
-        name=name, client_id=client_id, location_id=location_id, hardware_type_id=hardware_type_id,
+        name=name, client_id=destination_id, location_id=location_id, hardware_type_id=hardware_type_id,
         description=description, contact_id=contact_id, warranty_end_date=warranty_end_date,
         ip_address=ip_address, serial_number=serial_number,
     )
     for param in clear:
         if values[param] is not None:
             raise ValueError(f"{param}: cannot be given a value and listed in clear_fields in the same call")
+    if destination_id is not None:
+        if destination_id == current_client_id:
+            raise ValueError("move_to_client_id: must differ from client_id; omit it for an ordinary edit")
+        if values["location_id"] is None:
+            raise ValueError("location_id: required when moving an asset; choose a location of move_to_client_id")
+        if values["contact_id"] is None and "contact_id" not in clear:
+            raise ValueError("contact_id: when moving, supply a destination contact or clear_fields=['contact_id']")
     body = build_body(values, CUSTOM_BODY_MAP, clear=clear, clear_values=CUSTOM_CLEAR_VALUES)
-    if not set(body) - {"ClientId"}:
+    if not body:
         raise ValueError(
             "nothing to change: give at least one of name, location_id, hardware_type_id, description, "
             "contact_id, warranty_end_date, ip_address, serial_number or clear_fields (client_id alone changes nothing)"
         )
+    if destination_id is not None:
+        current = await _read_back_custom(ctx, tool="update_custom_asset", client_id=current_client_id, asset_id=asset_id)
+        if current.get("ClientId") != current_client_id:
+            raise ValueError("client_id: current asset ownership could not be verified; nothing was written. Check list_custom_assets before moving")
     data = await client_of(ctx).patch(
         UPDATE_CUSTOM_OP, path_params={"customAssetId": asset_id}, json_body=body, tool="update_custom_asset"
     )
     created_id(data, UPDATE_CUSTOM_OP, tool="update_custom_asset")
-    return await _read_back_custom(ctx, tool="update_custom_asset", client_id=values["client_id"], asset_id=asset_id)
+    return await _read_back_custom(ctx, tool="update_custom_asset", client_id=destination_id or current_client_id, asset_id=asset_id)
 
 
 def _clear_names(clear_fields: list[str] | None) -> list[str]:

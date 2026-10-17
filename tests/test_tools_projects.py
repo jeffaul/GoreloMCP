@@ -6,6 +6,7 @@ shapes, Gorelo errors mapped to the snake_case param, each local validation erro
 and the destructive gate.
 """
 
+import inspect
 import json
 import logging
 import re
@@ -380,7 +381,7 @@ def test_the_values_offered_are_exactly_the_ones_the_spec_text_allows(tool, para
 
 @needs_spec_text
 def test_the_status_and_conversation_ids_in_the_descriptions_match_the_spec_text():
-    assert "NotStarted=1, InProgress=2, OnHold=3, Completed=4, Closed=5" in param_text("get", "/v1/projects", "StatusIds")
+    assert "1 Not started, 2 In progress, 3 On hold, 4 Completed, 5 Closed" in param_text("get", "/v1/projects", "StatusIds")
     for tool, param in (("list_projects", "status_ids"), ("update_project", "status_id")):
         assert "1 NotStarted, 2 InProgress, 3 OnHold, 4 Completed, 5 Closed" in param_description(tool, param)
     kinds = param_text("get", "/v1/projects/{projectId}/tasks/{taskId}/comments", "ConversationType")
@@ -492,7 +493,7 @@ def test_the_group_sentence_tripwire_reads_the_summary_as_well_as_the_descriptio
 @needs_spec_text
 def test_the_documented_rules_the_docstrings_repeat_are_in_the_spec_text():
     create = spec_text("post", "/v1/projects")
-    assert "created in the `NotStarted` status" in create and "numbered from the same sequence the app uses" in create
+    assert "created in status 1 (Not started)" in create and "numbered from the same sequence the app uses" in create
     assert "same project-created notification" in create
     # The 2026-10-14 snapshot dropped the sentence about GroupId or GroupIds from this operation text (it had stayed there,
     # stale, since 2026-10-02: CreateProjectCommand has had only GroupId since then, see
@@ -1847,7 +1848,11 @@ ID_EXPECTED = "expected a positive whole number such as 123"
 
 def documented_scale(text):
     """{id: label} of every "Label=N" pair of a spec text (spaces inside a label dropped: "Not Started" is NotStarted)."""
-    return {int(number): label.replace(" ", "") for label, number in re.findall(r"([A-Za-z][A-Za-z ]*)=(\d+)", text)}
+    pairs = re.findall(r"([A-Za-z][A-Za-z ]*)=(\d+)", text)
+    if pairs:
+        return {int(number): label.replace(" ", "") for label, number in pairs}
+    pairs = re.findall(r"\b([1-5]) (Not started|In progress|On hold|Completed|Closed|In Progress|Not Started|On Hold)", text)
+    return {int(number): ''.join(word.capitalize() for word in label.split()) for number, label in pairs}
 
 
 @needs_spec_text
@@ -2570,7 +2575,7 @@ async def test_create_project_comment_sends_every_optional_field(server, mock_go
         server,
         "create_project_comment",
         {
-            "project_id": PROJECT, "task_id": TASK, "body": "<p>See file</p>", "body_text": "See file",
+            "project_id": PROJECT, "task_id": TASK, "body": "<p>See file</p>",
             "conversation_type": "side_conversation", "conversation_id": CONVERSATION,
             "attachments": [
                 {"name": "plan.pdf", "url": "https://files.example.test/a?token=1"},
@@ -2580,7 +2585,7 @@ async def test_create_project_comment_sends_every_optional_field(server, mock_go
         },
     )
     assert mock_gorelo.requests[0].json == {
-        "Body": "<p>See file</p>", "BodyText": "See file", "ConversationTypeId": 3, "ConversationId": CONVERSATION,
+        "Body": "<p>See file</p>", "ConversationTypeId": 3, "ConversationId": CONVERSATION,
         "Attachments": [
             {"Name": "plan.pdf", "Url": "https://files.example.test/a?token=1"},
             {"Name": "photo.png", "Url": "https://files.example.test/b?token=2"},
@@ -2605,7 +2610,6 @@ async def test_create_project_comment_sends_every_optional_field(server, mock_go
         ({"task_id": TASK, "conversation_type": "approval", "conversation_id": " "}, "conversation_id: must not be empty or whitespace only"),
         ({"body": ""}, "body: must not be empty or whitespace only"),
         ({"body": "   "}, "body: must not be empty or whitespace only"),
-        ({"body_text": ""}, "body_text: must not be empty or whitespace only"),
         ({"attachments": []}, "attachments: must not be an empty list"),
         ({"attachments": [{"name": " ", "url": "https://x.test/a"}]}, "attachments[0].name: must not be empty or whitespace only"),
         ({"attachments": [{"name": "a.pdf", "url": ""}]}, "attachments[0].url: must not be empty or whitespace only"),
@@ -2653,8 +2657,8 @@ def test_the_comment_conversation_rules_are_the_ones_the_two_schemas_state():
     assert "Required for Side Conversation and Approval, and rejected for Public and Private" in task["ConversationId"]
     # BodyText is markdown (not plain text), on both comment commands
     for fields in (project, task):
-        assert fields["BodyText"] == "The same body as markdown, if you keep one."
-    assert param_description("create_project_comment", "body_text") == "The same body as markdown, if you keep one."
+        assert "BodyText" not in fields
+    assert "body_text" not in inspect.signature(specs()["create_project_comment"].fn).parameters
 
 
 @pytest.mark.parametrize("task", [False, True], ids=["project comment", "task comment"])
@@ -2773,7 +2777,7 @@ def test_create_project_comment_docstring_states_who_is_emailed_and_the_waiting_
     kinds = param_description("create_project_comment", "conversation_type")
     assert "Project comments allow only those" in kinds and "side_conversation and approval" in kinds
     # 2026-10-02: the schema texts of BodyText (markdown), CreatedByName (API when omitted) and CreatedOn (now when omitted)
-    assert param_description("create_project_comment", "body_text") == "The same body as markdown, if you keep one."
+    assert "body_text" not in inspect.signature(specs()["create_project_comment"].fn).parameters
     assert "Gorelo records API" in param_description("create_project_comment", "created_by_name")
     created = param_description("create_project_comment", "created_on")
     assert "omitted, now" in created and "importing a comment that existed elsewhere" in created
@@ -2931,3 +2935,16 @@ async def test_project_delete_and_section_delete_cannot_be_reached_through_any_t
         text = await call_tool_error(dserver, name, {"project_id": PROJECT, "confirm": True})
         assert "unknown tool" in text.lower()
     assert mock_gorelo.requests == []
+
+
+@pytest.mark.parametrize('task', [False, True])
+async def test_removed_body_text_is_not_exposed_and_comments_send_body_only(server, mock_gorelo, task):
+    tool = next(t for t in await list_tools(server) if t.name == 'create_project_comment')
+    assert 'body_text' not in tool.inputSchema['properties']
+    route_comment(mock_gorelo, task=task)
+    arguments = {'project_id': PROJECT, 'body': '<p>Release compatibility</p>'}
+    if task:
+        arguments['task_id'] = TASK
+    await call_tool(server, 'create_project_comment', arguments)
+    assert 'BodyText' not in mock_gorelo.requests[0].json
+    assert mock_gorelo.requests[0].json['Body'] == arguments['body']

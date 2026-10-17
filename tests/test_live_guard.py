@@ -2908,6 +2908,10 @@ def test_every_create_operation_is_known_to_require_intents():
     posts = {key for key in WRITE_OPS if key.startswith("POST ")}
     assert posts - set(_CREATES) == {
         "POST /v1/alerts", "POST /v1/api-keys", "POST /v1/forms/{formId}/submission-links", "POST /v1/payments",
+        'POST /v1/documents',
+        'POST /v1/documents/{documentId}/duplicate',
+        'POST /v1/documents/{documentId}/related-items',
+        'POST /v1/documents/{documentId}/versions/{versionId}/restore',
     }
     assert set(_CREATES) <= posts
     assert _CREATES["POST /v1/invoices"] == "invoice"
@@ -2940,6 +2944,12 @@ NEVER_OPS = {
     "DELETE /v1/contracts/{contractId}",
     "POST /v1/payments",
     "DELETE /v1/payments/{paymentId}",
+    'POST /v1/documents',
+    'PATCH /v1/documents/{documentId}',
+    'POST /v1/documents/{documentId}/duplicate',
+    'POST /v1/documents/{documentId}/versions/{versionId}/restore',
+    'POST /v1/documents/{documentId}/related-items',
+    'DELETE /v1/documents/{documentId}/related-items/{relatedItemId}',
 }
 # a GET that is not a plain read: write mode lets it through only for a run-created invoice
 CONDITIONAL_GETS = {"GET /v1/invoices/{invoiceId}/pdf"}
@@ -3290,8 +3300,8 @@ def test_a_custom_asset_is_changed_only_when_the_run_created_it_for_the_test_cli
     path = f"/assets/custom/{CUSTOM_ASSET}"
     assets_guard.check(build("PATCH", path, {"ClientId": TEST_CLIENT, "Name": f"{RUN}-asset renamed", "IpAddress": None}))
     assets_guard.check(build("PATCH", path, {"ClientId": TEST_CLIENT, "Description": None, "WarrantyEndDate": None}))
-    refused(assets_guard, build("PATCH", path, {"Description": "no client"}), "ClientId is required and must be 9501")
-    refused(assets_guard, build("PATCH", path, {"ClientId": None, "Description": "x"}), "ClientId is required")
+    assets_guard.check(build("PATCH", path, {"Description": "no client"}))
+    assets_guard.check(build("PATCH", path, {"ClientId": None, "Description": "x"}))
     refused(assets_guard, build("PATCH", path, {"ClientId": 12345}), "ClientId must be 9501")
     refused(assets_guard, build("PATCH", path, {"ClientId": str(TEST_CLIENT)}), "ClientId must be a JSON integer")
     refused(assets_guard, build("PATCH", path, {"ClientId": TEST_CLIENT, "Name": "Customer laptop"}), "Name must start with the run id")
@@ -3301,9 +3311,9 @@ def test_a_custom_asset_is_changed_only_when_the_run_created_it_for_the_test_cli
     refused(assets_guard, build("PATCH", path, {"ClientId": TEST_CLIENT, "Surprise": 1}), "field the spec does not define")
 
 
-def test_the_negative_check_may_name_the_second_client_and_no_other(assets_guard):
+def test_the_live_harness_never_moves_an_asset_to_the_second_client(assets_guard):
     path = f"/assets/custom/{CUSTOM_ASSET}"
-    assets_guard.check(build("PATCH", path, {"ClientId": SECOND, "Name": f"{RUN}-asset wrong client"}))
+    refused(assets_guard, build("PATCH", path, {"ClientId": SECOND, "Name": f"{RUN}-asset wrong client"}), "the harness never moves assets")
     refused(assets_guard, build("PATCH", path, {"ClientId": 777, "Name": f"{RUN}-asset"}), "ClientId must be 9501")
 
 

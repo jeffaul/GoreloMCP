@@ -163,7 +163,7 @@ def test_the_single_agent_is_the_list_row_fields_plus_custom_properties_in_the_s
     assert {"LocationId", "WarrantyStartDate", "WarrantyEndDate"} <= set(row) and "ClientLocationId" not in row
     custom = record["CustomProperties"]
     assert (custom["type"], custom["items"]["ref"], custom["nullable"]) == ("array", "CustomPropertyValue", False)
-    assert set(spec_index.schema("CustomPropertyValue")["fields"]) == {"Id", "Variable", "Name", "Type", "Value", "IsSet"}
+    assert set(spec_index.schema("CustomPropertyValue")["fields"]) == {"Id", "Variable", "Name", "Type", "Value", "IsSet", "IsHidden"}
     # no operation updates a device, so nothing in this module could write a custom property of one
     assert {op.method for op in spec_index.ops.values() if op.path == "/v1/assets/agents/{deviceId}"} == {"GET", "DELETE"}
     doc = flat(assets_module.__doc__)
@@ -712,7 +712,7 @@ CREATE_PARAMS = [
 ]
 UPDATE_PARAMS = [
     "custom_asset_id", "client_id", "name", "location_id", "hardware_type_id", "description", "contact_id",
-    "warranty_end_date", "ip_address", "serial_number", "clear_fields",
+    "warranty_end_date", "ip_address", "serial_number", "clear_fields", "move_to_client_id",
 ]
 CLEARABLE = ["description", "contact_id", "warranty_end_date", "ip_address", "serial_number"]
 ASSET = uid(5)
@@ -767,7 +767,7 @@ def test_the_write_docstrings_say_what_the_user_needs_to_know():
     assert "timeline" in create and "cannot delete custom assets" in create and "Gorelo app" in create
     assert "list_custom_asset_hardware_types" in create
     update = flat(assets_module.update_custom_asset.__doc__)
-    assert "client cannot be changed" in update.lower() and "clear_fields" in update and "not cleared" in update
+    assert "Ordinary edits never send ClientId" in update and "clear_fields" in update and "not cleared" in update
     for name in WRITE_TOOLS:
         assert "Side effects:" in flat(getattr(assets_module, name).__doc__)
 
@@ -939,7 +939,7 @@ async def test_update_sends_only_the_changed_fields_plus_client_id_and_reads_the
     mock_gorelo.on("GET", CUSTOM, paged_envelope([row]))
     result = await call_tool(server, "update_custom_asset", update_args(name="New name"))
     patch, get = mock_gorelo.requests
-    assert (patch.method, patch.path, patch.query, patch.json) == ("PATCH", PATCH_PATH, {}, {"ClientId": 9101, "Name": "New name"})
+    assert (patch.method, patch.path, patch.query, patch.json) == ("PATCH", PATCH_PATH, {}, {"Name": "New name"})
     assert (get.method, get.path, get.query) == ("GET", CUSTOM, {"ClientIds": "9101", "PageSize": "200"})
     assert result == row
 
@@ -948,7 +948,7 @@ async def test_update_sends_every_field_under_its_pascal_case_name(server, mock_
     mock_gorelo.on("PATCH", PATCH_PATH, envelope({"Id": ASSET}))
     mock_gorelo.on("GET", CUSTOM, paged_envelope([row_for(ASSET)]))
     await call_tool(server, "update_custom_asset", update_args(**CREATE_ALL))
-    assert mock_gorelo.requests[0].json == CREATE_ALL_BODY
+    assert mock_gorelo.requests[0].json == {k: v for k, v in CREATE_ALL_BODY.items() if k != "ClientId"}
 
 
 async def test_update_clear_fields_are_sent_as_json_null(server, mock_gorelo):
@@ -956,7 +956,7 @@ async def test_update_clear_fields_are_sent_as_json_null(server, mock_gorelo):
     mock_gorelo.on("GET", CUSTOM, paged_envelope([row_for(ASSET)]))
     await call_tool(server, "update_custom_asset", update_args(clear_fields=CLEARABLE))
     assert mock_gorelo.requests[0].json == {
-        "ClientId": 9101, "Description": None, "ContactId": None, "WarrantyEndDate": None,
+        "Description": None, "ContactId": None, "WarrantyEndDate": None,
         "IpAddress": None, "SerialNumber": None,
     }
     assert b'"Description":null' in mock_gorelo.requests[0].content.replace(b" ", b"")
@@ -966,7 +966,7 @@ async def test_update_can_set_one_field_and_clear_another_in_one_call(server, mo
     mock_gorelo.on("PATCH", PATCH_PATH, envelope({"Id": ASSET}))
     mock_gorelo.on("GET", CUSTOM, paged_envelope([row_for(ASSET)]))
     await call_tool(server, "update_custom_asset", update_args(name="N", clear_fields=["ip_address", "ip_address"]))
-    assert mock_gorelo.requests[0].json == {"ClientId": 9101, "Name": "N", "IpAddress": None}
+    assert mock_gorelo.requests[0].json == {"Name": "N", "IpAddress": None}
 
 
 async def test_update_normalizes_an_uppercase_asset_id_and_matches_the_row(server, mock_gorelo):
@@ -1001,7 +1001,7 @@ async def test_update_without_an_id_in_the_answer_is_an_unconfirmed_write(server
 @pytest.mark.parametrize(
     "property_name, param",
     [
-        ("Name", "name"), ("ClientId", "client_id"), ("LocationId", "location_id"),
+        ("Name", "name"), ("ClientId", "move_to_client_id"), ("LocationId", "location_id"),
         ("HardwareTypeId", "hardware_type_id"), ("Description", "description"), ("ContactId", "contact_id"),
         ("WarrantyEndDate", "warranty_end_date"), ("IpAddress", "ip_address"), ("SerialNumber", "serial_number"),
         ("customAssetId", "custom_asset_id"),
@@ -1081,3 +1081,36 @@ async def test_update_requires_client_id_and_the_asset_id(server, mock_gorelo):
 def test_the_new_asset_modules_text_has_no_dashes():
     source = Path(assets_module.__file__).read_text(encoding="utf-8")
     assert chr(0x2014) not in source and chr(0x2013) not in source
+
+
+@pytest.mark.parametrize('contact', [{'contact_id': 8123}, {'clear_fields': ['contact_id']}])
+async def test_move_checks_current_owner_and_uses_destination_for_patch_and_readback(server, mock_gorelo, contact):
+    current = row_for(ASSET)
+    moved = {**current, 'ClientId': 9200, 'LocationId': 5520, 'ContactId': contact.get('contact_id')}
+    mock_gorelo.on('GET', CUSTOM, paged_envelope([current]), query={'ClientIds': '9101', 'PageSize': '200'})
+    mock_gorelo.on('PATCH', PATCH_PATH, envelope({'Id': ASSET}))
+    mock_gorelo.on('GET', CUSTOM, paged_envelope([moved]), query={'ClientIds': '9200', 'PageSize': '200'})
+    result = await call_tool(server, 'update_custom_asset', update_args(move_to_client_id=9200, location_id=5520, **contact))
+    assert result == moved
+    assert [r.method for r in mock_gorelo.requests] == ['GET', 'PATCH', 'GET']
+    assert mock_gorelo.requests[1].json == {'ClientId': 9200, 'LocationId': 5520, 'ContactId': contact.get('contact_id')}
+
+
+@pytest.mark.parametrize('extra,field', [
+    ({'move_to_client_id': 9200}, 'location_id'),
+    ({'move_to_client_id': 9200, 'location_id': 5520}, 'contact_id'),
+    ({'move_to_client_id': 9101}, 'move_to_client_id'),
+    ({'move_to_client_id': 0}, 'move_to_client_id'),
+])
+async def test_move_refuses_missing_or_ambiguous_destination_before_http(server, mock_gorelo, extra, field):
+    text = await call_tool_error(server, 'update_custom_asset', update_args(**extra))
+    assert field in text
+    assert not mock_gorelo.requests
+
+
+@pytest.mark.parametrize('rows', [[], [{**row_for(ASSET), 'ClientId': 9300}]])
+async def test_move_refuses_unverified_current_owner_before_patch(server, mock_gorelo, rows):
+    mock_gorelo.on('GET', CUSTOM, paged_envelope(rows))
+    text = await call_tool_error(server, 'update_custom_asset', update_args(move_to_client_id=9200, location_id=5520, clear_fields=['contact_id']))
+    assert 'ownership could not be verified' in text
+    assert not mock_gorelo.calls('PATCH', PATCH_PATH)

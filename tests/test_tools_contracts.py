@@ -183,7 +183,7 @@ async def test_schemas_annotations_and_descriptions(server_factory):
     listing = " ".join(listed["list_contracts"].description.split())
     assert "A service line's Id is the service_line_id of create_time_entry and update_time_entry" in listing
     assert "Paging: pass next_cursor back as cursor with the SAME filters until has_more is false." in listing
-    assert "Expired and archived contracts are listed too: keep Status Active for live ones" in listing
+    assert "Active and expired contracts are listed by default" in listing
     assert "get_contract has the line items and labor detail" in listing
     properties = listed["list_contracts"].inputSchema["properties"]
     assert "list_clients" in properties["client_ids"]["description"]  # the tool that resolves the ids
@@ -212,7 +212,7 @@ async def test_list_contracts_sends_the_client_filter_and_the_paging_names(serve
     request = mock_gorelo.last
     assert (request.method, request.path, request.json) == ("GET", "/v1/contracts", None)
     assert request.query == {"ClientIds": "9101,9102", "PageSize": "2", "Cursor": "abc"}
-    assert set(request.query) == set(spec_index.op("GET /v1/contracts").query_params)
+    assert set(request.query) == set(spec_index.op("GET /v1/contracts").query_params) - {"StatusIds"}
     assert result == {
         "items": [contract(9), contract(10, 9102)],
         "count": 2,
@@ -419,3 +419,16 @@ async def test_each_tool_sends_exactly_the_operations_it_declares(server, mock_g
         await call_tool(server, name, args)
         sent = {f"{r.method} {r.path}" for r in mock_gorelo.requests}
         assert sent == {op.replace("{contractId}", "9") for op in specs[name].ops}, name
+
+
+async def test_status_filter_can_include_archived_contracts(server, mock_gorelo):
+    mock_gorelo.on('GET', '/v1/contracts', paged_envelope([contract(9, Status={'Id': 3, 'Name': 'Archived'})]))
+    result = await call_tool(server, 'list_contracts', {'status_ids': [1, 3]})
+    assert mock_gorelo.last.query['StatusIds'] == '1,3'
+    assert result['filters']['status_ids'] == [1, 3]
+
+
+async def test_status_filter_rejects_unknown_contract_status_without_http(server, mock_gorelo):
+    text = await call_tool_error(server, 'list_contracts', {'status_ids': [4]})
+    assert 'status_ids' in text
+    assert not mock_gorelo.requests

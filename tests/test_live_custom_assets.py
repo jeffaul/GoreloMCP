@@ -116,25 +116,17 @@ class AssetSession:
             return self._row()
         if name == "update_custom_asset":
             ident = arguments.pop("custom_asset_id")
+            if arguments.get("move_to_client_id") is not None:
+                if self.wrong_client == "accept":
+                    return self._row()  # simulate a broken local validation
+                if self.wrong_client == "server":
+                    raise ToolFailed(name, "unexpected server failure", sent=True)
+                raise ToolFailed(name, "location_id: required when moving an asset", sent=False)
+            arguments.pop("client_id")  # ordinary edits must never send ownership
             clear = arguments.pop("clear_fields", None) or []
             body = {PASCAL[key]: value for key, value in arguments.items() if value is not None}
             body.update({PASCAL[key]: None for key in clear})
-            if arguments["client_id"] != TEST_CLIENT and self.wrong_client == "local":
-                raise ToolFailed(name, "client_id: must be the asset's client", sent=False)
             self._send("PATCH", f"/assets/custom/{ident}", body)
-            if arguments["client_id"] != TEST_CLIENT:
-                if self.wrong_client == "refuse":
-                    raise ToolFailed(name, "Gorelo rejected update_custom_asset (HTTP 400, code 070102): wrong client", sent=True)
-                if self.wrong_client == "server":
-                    raise ToolFailed(name, "Gorelo failed update_custom_asset (HTTP 500, code 1)", sent=True)
-                if self.wrong_client in ("429", "401", "403", "404", "409"):
-                    raise ToolFailed(name, f"Gorelo rejected update_custom_asset (HTTP {self.wrong_client}, code 1): no", sent=True)
-                if self.wrong_client == "timeout":
-                    raise ToolFailed(name, "Gorelo did not answer update_custom_asset in time; it may have applied the write", sent=True)
-                if self.wrong_client == "unconfirmed":
-                    raise ToolFailed(
-                        name, "Gorelo did not confirm update_custom_asset (HTTP 400): the write may have applied", sent=True
-                    )
             for key, value in body.items():
                 self.asset[key] = "" if (key == "Description" and value is None) else value
             return self._row()
@@ -168,13 +160,13 @@ async def test_the_happy_path_creates_updates_clears_and_checks_a_wrong_client(t
         "name": f"{RUN}-asset", "client_id": TEST_CLIENT, "location_id": LOCATION, "hardware_type_id": HARDWARE,
         "serial_number": f"{RUN}-sn", "ip_address": "192.0.2.10", "warranty_end_date": "2100-10-02",
     }
-    (post, create_body), (_, rename), (_, clear), (_, wrong) = session.bodies
+    (post, create_body), (_, rename), (_, clear) = session.bodies
     assert post == "POST /assets/custom" and create_body["Name"].startswith("MCPTEST-") and create_body["ClientId"] == TEST_CLIENT
     assert rename == {
-        "ClientId": TEST_CLIENT, "Name": f"{RUN}-asset v2", "IpAddress": "192.0.2.11", "Description": f"{RUN}-asset: updated",
+        "Name": f"{RUN}-asset v2", "IpAddress": "192.0.2.11", "Description": f"{RUN}-asset: updated",
     }
-    assert clear == {"ClientId": TEST_CLIENT, "Description": None, "IpAddress": None, "WarrantyEndDate": None}
-    assert wrong["ClientId"] == SECOND  # the negative check names the other test client and Gorelo refuses it
+    assert clear == { "Description": None, "IpAddress": None, "WarrantyEndDate": None}
+    assert all("ClientId" not in body for _, body in session.bodies[1:])
     assert session.asset["Name"] == f"{RUN}-asset v2" and session.asset["SerialNumber"] == f"{RUN}-sn"
     assert session.asset["ClientId"] == TEST_CLIENT and session.asset["IpAddress"] is None
     (record,) = manifest.all_created()
@@ -182,7 +174,7 @@ async def test_the_happy_path_creates_updates_clears_and_checks_a_wrong_client(t
         "custom_asset", session.asset["Id"], f"{RUN}-asset", {"client_id": TEST_CLIENT},
     )
     assert manifest.unresolved_intents() == [] and not matrix.guard.violations
-    assert any("refused by Gorelo (HTTP 400)" in note for note in matrix.notes)
+    assert any("incomplete asset move refused locally" in note for note in matrix.notes)
     assert any(session.asset["Id"] in note and "stays on the test client" in note for note in matrix.notes)
 
 
@@ -294,52 +286,19 @@ async def test_cleared_fields_may_read_back_as_null_or_as_an_empty_text(tmp_path
     await write_matrix.area_custom_assets(matrix)
 
 
-async def test_a_wrong_client_that_gorelo_accepts_fails_the_area_and_says_where_to_look(tmp_path):
+async def test_a_tool_that_accepts_an_incomplete_move_fails_the_area(tmp_path):
     matrix, session, manifest = matrix_for(tmp_path, wrong_client="accept")
-    with pytest.raises(write_matrix.CheckFailed, match=rf"ACCEPTED by Gorelo.*client {SECOND}.*{RUN}-asset"):
+    with pytest.raises(write_matrix.CheckFailed, match="incomplete asset move was unexpectedly accepted"):
         await write_matrix.area_custom_assets(matrix)
-    assert len(manifest.all_created()) == 1
+    assert manifest.all_created()[0].details == {"client_id": TEST_CLIENT}
+    assert all("ClientId" not in body for _, body in session.bodies[1:])
 
 
-def moved_record(manifest):
-    (record,) = manifest.all_created()
-    return record
-
-
-async def test_a_wrong_client_that_gorelo_accepts_is_recorded_on_the_second_client(tmp_path):
-    matrix, session, manifest = matrix_for(tmp_path, wrong_client="accept")
-    with pytest.raises(write_matrix.CheckFailed, match="ACCEPTED"):
+async def test_an_incomplete_move_that_claims_to_have_sent_http_fails_the_area(tmp_path):
+    matrix, session, manifest = matrix_for(tmp_path, wrong_client="server")
+    with pytest.raises(write_matrix.CheckFailed, match="not safely refused before HTTP"):
         await write_matrix.area_custom_assets(matrix)
-    assert moved_record(manifest).details == {"client_id": SECOND}
-    assert any("MOVED" in note and str(SECOND) in note and "stays on the test client" not in note for note in matrix.notes)
-    assert cleanup.custom_asset_residue(SECOND) == f"stays on client {SECOND}, not on the test client {cleanup.CUSTOM_ASSET_RESIDUE_TAIL}"
-    assert cleanup.is_known_undeletable(
-        SimpleNamespace(kind="custom_asset", outcome=cleanup.custom_asset_residue(SECOND))
-    )
-
-
-@pytest.mark.parametrize("mode", ["server", "timeout", "unconfirmed"])
-async def test_a_wrong_client_with_an_unknown_outcome_records_an_unknown_client(tmp_path, mode):
-    matrix, session, manifest = matrix_for(tmp_path, wrong_client=mode)
-    with pytest.raises(write_matrix.CheckFailed, match=rf"was unexpected.*unknown whether the asset moved to client {SECOND}"):
-        await write_matrix.area_custom_assets(matrix)
-    assert moved_record(manifest).details == {"client_id": cleanup.CUSTOM_ASSET_CLIENT_UNKNOWN}
-    text = cleanup.custom_asset_residue(cleanup.CUSTOM_ASSET_CLIENT_UNKNOWN)
-    assert "test client or on the second client" in text and text.endswith(cleanup.CUSTOM_ASSET_RESIDUE_TAIL)
-
-
-@pytest.mark.parametrize("mode", ["429", "401", "403", "404", "409", "local"])
-async def test_a_wrong_client_not_refused_with_400_is_not_evaluated_and_the_asset_stays(tmp_path, mode):
-    matrix, session, manifest = matrix_for(tmp_path, wrong_client=mode)
-    with pytest.raises(write_matrix.CheckFailed, match="not refused by Gorelo with HTTP 400, so the negative check was not evaluated"):
-        await write_matrix.area_custom_assets(matrix)
-    assert moved_record(manifest).details == {"client_id": TEST_CLIENT}  # Gorelo did not process it: nothing moved
-
-
-async def test_the_not_evaluated_text_names_the_status(tmp_path):
-    matrix, session, manifest = matrix_for(tmp_path, wrong_client="429")
-    with pytest.raises(write_matrix.CheckFailed, match=r"\(HTTP 429\)"):
-        await write_matrix.area_custom_assets(matrix)
+    assert manifest.all_created()[0].details == {"client_id": TEST_CLIENT}
 
 
 def test_the_residue_text_defaults_to_the_test_client():
@@ -347,9 +306,9 @@ def test_the_residue_text_defaults_to_the_test_client():
 
 
 async def test_the_cleanup_outcome_and_the_summary_name_where_a_moved_asset_is(tmp_path, make_settings):
-    matrix, session, manifest = matrix_for(tmp_path, wrong_client="accept")
-    with pytest.raises(write_matrix.CheckFailed):
-        await write_matrix.area_custom_assets(matrix)
+    matrix, session, manifest = matrix_for(tmp_path)
+    await write_matrix.area_custom_assets(matrix)
+    manifest.update_details("custom_asset", session.asset["Id"], client_id=SECOND)
     out: list[str] = []
     report = await cleanup.run_cleanup(
         manifest, settings=make_settings(destructive=True), transport=MockGorelo().transport, pace=0, echo=out.append,
@@ -514,7 +473,7 @@ class AssetsFake(FakeGorelo):
         asset = self.assets.get(self.part(q, 4))
         if asset is None:
             return self.missing("custom asset")
-        if q.json.get("ClientId") != asset["ClientId"]:
+        if "ClientId" in q.json and q.json["ClientId"] != asset["ClientId"]:
             return error_envelope(400, [("070102", "The asset does not belong to this client.", "ClientId")])
         for key, value in q.json.items():
             asset[key] = ("" if value is None else value) if key == "Description" else value
@@ -542,18 +501,18 @@ async def test_end_to_end_the_area_passes_leaves_one_residue_and_the_run_still_p
 
 
 @needs_tools
-async def test_end_to_end_the_third_update_names_the_other_client_and_gorelo_refuses_it(run):
+async def test_end_to_end_updates_never_send_ownership(run):
     fake = AssetsFake()
     report = await run(fake, areas=["custom_assets"], with_custom_assets=True)
     assert report.ok
     patches = [r for r in fake.mock.requests if r.method == "PATCH"]
-    assert [p.json["ClientId"] for p in patches] == [TEST_CLIENT, TEST_CLIENT, SECOND]
-    assert patches[1].json == {"ClientId": TEST_CLIENT, "Description": None, "IpAddress": None, "WarrantyEndDate": None}
+    assert len(patches) == 2 and all("ClientId" not in p.json for p in patches)
+    assert patches[1].json == { "Description": None, "IpAddress": None, "WarrantyEndDate": None}
     assert fake.assets and next(iter(fake.assets.values()))["ClientId"] == TEST_CLIENT  # the refused update changed nothing
 
 
 @needs_tools
-async def test_end_to_end_a_gorelo_that_accepts_the_wrong_client_fails_the_area_and_the_run(run, lines):
+async def test_end_to_end_no_move_reaches_even_a_lenient_gorelo(run, lines):
     fake = AssetsFake()
     original = fake.patch_asset
 
@@ -565,8 +524,9 @@ async def test_end_to_end_a_gorelo_that_accepts_the_wrong_client_fails_the_area_
     fake.handlers["PATCH /v1/assets/custom/{customAssetId}"] = lenient
     report = await run(fake, areas=["custom_assets"], with_custom_assets=True)
     found = results(report)["custom_assets"]
-    assert found.status == "FAIL" and "ACCEPTED by Gorelo" in found.detail
-    assert not report.ok and report.exit_code == 1 and lines[-1] == "result: FAILED"
+    assert found.status == "pass"
+    assert report.ok and report.exit_code == 0
+    assert all("ClientId" not in r.json for r in fake.mock.requests if r.method == "PATCH")
     assert report.summary["undeletable"] == 1 and report.summary["leftovers"] == 0  # the asset is still a known residue
 
 

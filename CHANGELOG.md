@@ -2,6 +2,35 @@
 
 All notable changes to this project are listed here, newest first, in the plain style of Keep a Changelog.
 
+## Unreleased
+
+### Fixed
+
+- Follow the Gorelo API specification of 2026-10-16 (117 operations, 310 schemas,
+  contract a7954b24844b). New document operations are recorded in the specification
+  but are not exposed as MCP tools in this compatibility update.
+- Project and task comments send only Body. The retired body_text parameter has
+  been removed, so it cannot generate a request Gorelo rejects.
+- Hidden client custom fields retain IsHidden. Saved hidden values are checked
+  through IsSet and returned with a warning that their values cannot be verified.
+  Recovery advice never mistakes a hidden saved value for an empty value or
+  suggests clearing it. Unsent hidden values can only be checked by their visible
+  state, not by comparing their contents.
+- Ordinary custom-asset edits omit ClientId, preventing an edit from moving an
+  asset when its owner changes. Intentional moves use move_to_client_id, check
+  current ownership, require a destination location and an explicit contact or
+  contact clearing, and read back under the destination client.
+- Client status guidance now matches the live specification: 1 Active,
+  3 Credit hold, 4 Archived. Archived clients are excluded by default.
+
+- The live test harness no longer sends a different ClientId expecting a refusal:
+  that request can now move an asset. It tests an incomplete move locally instead,
+  and its request guard blocks all cross-client asset moves and document writes.
+- Contract lists offer status_ids (1 Active, 2 Expired, 3 Archived), with guidance
+  that archived contracts are excluded by default. Approval and alert labels
+  follow the new specification; the existing alert filter ignored remains an
+  alias for Gorelo's Dismissed status.
+
 ## 1.2.0 (2026-10-14)
 
 Follows the Gorelo Public API description of 2026-10-14 (103 operations, contract 1b1c0cec0e9a), which adds custom fields to
