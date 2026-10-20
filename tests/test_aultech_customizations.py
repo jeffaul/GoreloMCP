@@ -27,11 +27,13 @@ def test_bind_host_reaches_server_run(monkeypatch, host):
     entry = runpy.run_path("main.py")
     globals_ = entry["main"].__globals__
     calls = []
+    auth_calls = []
     monkeypatch.setitem(globals_, "load_dotenv", lambda: None)
     monkeypatch.setitem(globals_, "install_log_value_filter", lambda: None)
-    monkeypatch.setitem(globals_, "PersonalAuthProvider", lambda **kwargs: object())
+    monkeypatch.setitem(globals_, "PersonalAuthProvider", lambda **kwargs: auth_calls.append(kwargs) or object())
     monkeypatch.setitem(globals_, "build_server", lambda *a, **k: SimpleNamespace(run=lambda **kw: calls.append(kw)))
     entry["main"]()
+    assert {"chatgpt.com", "openai.com"} <= set(auth_calls[0]["allowed_redirect_domains"])
     assert calls == [{"transport": "http", "host": host or "127.0.0.1", "port": 8765}], (
         "main.py no longer passes the configured MCP_BIND_HOST (or the localhost default) to server.run."
     )

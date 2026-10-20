@@ -215,3 +215,44 @@ A future GitHub webhook deployment process should use authenticated webhook requ
 **Created:** October 14, 2026
 
 **Status:** Both customizations implemented and ChatGPT connectivity confirmed. PR customization checks implemented; webhook deployment pending.
+
+
+## 7. Upstream 1.3.0 integration (2026-10-20)
+
+- Preserve MCP_BIND_HOST from the process environment, as supplied by systemd.
+- Preserve chatgpt.com and openai.com in both PersonalAuthProvider defaults and
+  settings.BUILTIN_REDIRECT_DOMAINS. Startup now supplies the settings allowlist
+  explicitly, so changing only the provider default would break ChatGPT.
+- Keep update_custom_asset.client_id as an expected-current-owner argument, never
+  a move instruction. Explicit moves use move_to_client_id. When both are supplied,
+  ownership is verified before writing. Incorporate upstream single-record reads
+  and move read-back checks. The live harness uses the explicit move parameter.
+- Adopt upstream dismissed alert terminology; ignored is no longer accepted.
+- Use one deployment workflow, gated by customization tests and the full offline
+  suite. Remove the duplicate ungated deploy-prod workflow.
+- Production toolsets observed before integration: billing,core,forms,projects,
+  tickets,time,uptime; gated tools disabled. Documents remain opt-in.
+
+### Server follow-up
+
+Before changing configuration, back up the deployment's .env and .oauth-state
+using its established backup procedure; keep these secrets off GitHub. Record
+the deployed commit for rollback. This repository does not provide SSH access
+or prove a server backup has been taken.
+
+To add Documents while retaining the observed toolsets:
+
+```dotenv
+GORELO_TOOLSETS=core,tickets,time,billing,uptime,projects,forms,documents
+GORELO_ENABLE_DESTRUCTIVE=0
+```
+
+Grant the Gorelo API key the Documents scope with the access required, restart
+gorelo-mcp.service, and refresh the connector's tool list. No extra redirect
+setting is required for the existing ChatGPT connection in this fork. Do not
+replace the existing service unit or bind-address environment with upstream's
+localhost-only installation example.
+
+For rollback to pre-1.3.0 code, remove documents from GORELO_TOOLSETS and use
+GORELO_ENABLE_DESTRUCTIVE=0 (not a list of names). Restore the recorded fork
+commit and frozen dependencies. Preserve OAuth state.
