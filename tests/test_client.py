@@ -2491,9 +2491,14 @@ async def test_a_client_without_a_mock_transport_cannot_reach_gorelo(spec_index)
     from conftest import NetworkBlocked
 
     async with GoreloClient(TEST_API_KEY, spec=spec_index) as client:
-        # exactly the suite's guard: not a GoreloAPIError, which would mean the client swallowed it
-        with pytest.raises(NetworkBlocked):
+        # AnyIO may wrap the socket guard in an ExceptionGroup when a proxy is configured.
+        # Accept only NetworkBlocked leaves; unrelated failures still propagate.
+        blocked = False
+        try:
             await client.get_one(CLIENT_OP, path_params={"clientId": 1}, tool="t")
+        except* NetworkBlocked:
+            blocked = True
+        assert blocked, "the offline guard did not block the request"
 
 
 # --------------------------------------------------------------------------
