@@ -538,7 +538,7 @@ def test_every_real_body_accepts_a_fully_populated_well_shaped_body(spec_index):
         names = validate_body(op, body)
         assert set(op.body["fields"]) <= names, key
         checked += 1
-    assert checked == 36  # every JSON body of the live spec
+    assert checked == 36  # every JSON body of the live spec (32 until the 2026-10-17 spec added four)
 
 
 def test_a_body_for_an_operation_without_one_is_a_violation(tiny):

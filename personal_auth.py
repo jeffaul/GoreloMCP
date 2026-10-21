@@ -12,7 +12,7 @@ Usage:
     auth = PersonalAuthProvider(
         base_url="https://your-domain.com",
         password="your-secret-password",
-        allowed_redirect_domains=["claude.ai", "claude.com", "localhost"],
+        allowed_redirect_domains=["claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost"],
     )
 
     mcp = FastMCP(name="my-server", auth=auth)
@@ -142,7 +142,7 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
     - Bodies of requests to /authorize, /token, /register and /revoke are capped at 16 KiB,
       whatever the HTTP method; an OPTIONS with a body is refused (a preflight has none)
     - Fails closed: refuses to start without a password or on an unchecked fastmcp or mcp, and
-      authorize() works only inside a request the consent endpoint approved
+      authorize() is allowed only inside a request the consent endpoint approved
     - Token persistence to a JSON file (survives restarts), read, checked, pruned and
       written atomically by oauth_store.py
     - One issuer of pat_ and prt_ tokens for sign-ins and refreshes; refresh tokens rotate
@@ -174,7 +174,7 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
                 that nobody has to prove anything for would be open to whoever registers a client.
                 A password shorter than 16 characters starts, with a warning.
             allowed_redirect_domains: List of domains allowed in OAuth redirect URIs (a domain and
-                its subdomains). None, the default, means ["claude.ai", "claude.com", "localhost"]:
+                its subdomains). None, the default, means ["claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost"]:
                 there is no constructor setting that allows every domain. Whatever the list says,
                 an address is accepted only as https, or as http to localhost or a loopback address
                 that the list names (see oauth_guard.redirect_problem).
@@ -408,7 +408,7 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
     ) -> str:
         """Issue an authorization code and return the redirect address that carries it.
 
-        Works only inside a request that the consent endpoint approved for exactly this client and redirect address, after
+        Allowed only inside a request that the consent endpoint approved for exactly this client and redirect address, after
         the password matched (oauth_guard.approved / take_approval). Called from anywhere else, which can only happen if
         the framework's own /authorize handler ever got into the path, it raises access_denied: the password page is not
         the only thing standing between a client and a code. The redirect address is checked once more."""

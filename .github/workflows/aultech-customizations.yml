@@ -13,7 +13,7 @@ jobs:
   customizations:
     name: Preserve AulTECH bind and ChatGPT OAuth
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v5
@@ -46,6 +46,9 @@ jobs:
           tests/test_aultech_checks.py
           -q -p no:cacheprovider
           --junitxml=aultech-results.xml
+
+      - name: Full offline regression suite
+        run: uv run --frozen --with pytest --with anyio python -m pytest -q -p no:cacheprovider
 
       - name: Explain behavior results
         if: ${{ always() }}
