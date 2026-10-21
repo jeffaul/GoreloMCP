@@ -98,7 +98,7 @@ SECTIONS = (
 RUNTIME_ONLY = (".env", ".oauth-state", ".state", ".live-runs", ".venv")
 
 # The only hostnames the document may spell out: the Gorelo API host, the AI client's own and the reserved test domain.
-ALLOWED_HOSTS = frozenset({"api.usw.gorelo.io", "api.aue.gorelo.io", "gorelo.io", "claude.ai", "claude.com", "example.invalid",
+ALLOWED_HOSTS = frozenset({"api.usw.gorelo.io", "api.aue.gorelo.io", "gorelo.io", "claude.ai", "claude.com", "chatgpt.com", "openai.com", "example.invalid",
                            "site.local"})  # the start of the file name site.local.toml, not a host; gorelo.io is the domain GORELO_BASE_URL must be under
 HOST_TLDS = "com|io|tech|net|org|dev|ai|app|invalid|local|cloud|co|me|xyz"
 
@@ -857,9 +857,9 @@ def test_the_region_and_redirect_settings_it_describes_are_what_settings_parses(
             Settings.from_env({**base, ENV_BASE_URL: bad})
     assert "must be https, on `gorelo.io` or a subdomain of it, with no user name, port, query or fragment" in text
     extra = Settings.from_env({**base, ENV_EXTRA_REDIRECT_DOMAINS: "chatgpt.com, Global.Consent.Azure-APIM.net"})
-    assert list(extra.redirect_domains[:3]) == ["claude.ai", "claude.com", "localhost"]  # added AFTER the built-in ones
-    assert list(extra.redirect_domains[3:]) == ["chatgpt.com", "global.consent.azure-apim.net"]
-    assert "added after `claude.ai`, `claude.com` and `localhost`" in text and "also admits its subdomains" in text
+    assert list(extra.redirect_domains[:5]) == ["claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost"]  # AulTECH defaults
+    assert list(extra.redirect_domains[5:]) == ["global.consent.azure-apim.net"]
+    assert "added after `claude.ai`, `claude.com`, `chatgpt.com`, `openai.com` and `localhost`" in text and "also admits its subdomains" in text
     for bad in ("https://chatgpt.com", "chatgpt.com/path", "chatgpt.com:443", "*.chatgpt.com", "localhost", "203.0.113.7", "chatgpt"):
         with pytest.raises(SettingsError):
             Settings.from_env({**base, ENV_EXTRA_REDIRECT_DOMAINS: bad})
