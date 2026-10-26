@@ -44,7 +44,7 @@ In the default set.
 | `create_client` | write | `POST /v1/clients` | `name`, `location_name` | Create a client together with its default location; returns the created client record. |
 | `create_contact` | write | `POST /v1/contacts` | `client_id`, `first_name`, `last_name`, `primary_email` | Create a contact under a client; returns the created contact record. |
 | `create_custom_asset` | write | `POST /v1/assets/custom`, `GET /v1/assets/custom/{customAssetId}` | `name`, `client_id`, `location_id`, `hardware_type_id` | Create a custom (non-agent) asset at a location of a client; returns the new row (read back by id), or {Id, warning} if the read-back fails: then do not repeat the create; check with get_custom_asset. |
-| `get_agent` | read | `GET /v1/assets/agents/{deviceId}` | `agent_id` | Get one agent (managed device) by UUID; returns Gorelo's full device record, including CustomProperties (a field with IsHidden true has a null Value; IsSet still says whether one is saved). |
+| `get_agent` | read | `GET /v1/assets/agents/{agentAssetId}` | `agent_id` | Get one agent (managed device) by UUID; returns Gorelo's full device record, including CustomProperties (a field with IsHidden true has a null Value; IsSet still says whether one is saved). |
 | `get_client` | read | `GET /v1/clients/{clientId}` | `client_id` | Get one client by id; returns Gorelo's client record. |
 | `get_contact` | read | `GET /v1/contacts/{contactId}` | `contact_id` | Get one contact by id; returns Gorelo's contact record (SecondaryEmail is never included). |
 | `get_custom_asset` | read | `GET /v1/assets/custom/{customAssetId}` | `custom_asset_id` | Get one custom (non-agent) asset by UUID; returns the same fields as a list_custom_assets row (Description, SerialNumber, IpAddress and ContactId are null when the asset has none). |
@@ -132,12 +132,12 @@ In the default set.
 
 | Tool | Kind | Ops | Required params | What it does |
 |---|---|---|---|---|
-| `create_uptime_check` | write | `POST /v1/uptime`, `GET /v1/uptime/{checkId}` | `check_type`, `frequency_minutes`, `region` | Create an uptime check and return it. |
-| `delete_uptime_check` | destructive (only when GORELO_ENABLE_DESTRUCTIVE=1 or lists it by name) | `DELETE /v1/uptime/{checkId}` | `check_id` | Delete one uptime check by Id: a soft delete (deactivated, schedule cancelled) that stops monitoring its target. |
-| `get_uptime_check` | read | `GET /v1/uptime/{checkId}` | `check_id` | Get one uptime check by Id: target, status, region, tags and maintenance window. |
+| `create_uptime_check` | write | `POST /v1/uptime`, `GET /v1/uptime/{uptimeId}` | `check_type`, `frequency_minutes`, `region` | Create an uptime check and return it. |
+| `delete_uptime_check` | destructive (only when GORELO_ENABLE_DESTRUCTIVE=1 or lists it by name) | `DELETE /v1/uptime/{uptimeId}` | `check_id` | Delete one uptime check by Id: a soft delete (deactivated, schedule cancelled) that stops monitoring its target. |
+| `get_uptime_check` | read | `GET /v1/uptime/{uptimeId}` | `check_id` | Get one uptime check by Id: target, status, region, tags and maintenance window. |
 | `list_uptime_checks` | read | `GET /v1/uptime` | none | List uptime checks, one page at a time. |
-| `set_uptime_maintenance` | write (overwrites data) | `PATCH /v1/uptime/{checkId}`, `GET /v1/uptime/{checkId}` | `check_id`, `enabled` | Start or end a maintenance window on an uptime check and return it. |
-| `update_uptime_check` | write (overwrites data) | `PATCH /v1/uptime/{checkId}`, `GET /v1/uptime/{checkId}` | `check_id` | Change fields of an uptime check (partial update) and return it; tag_ids replaces the whole list. |
+| `set_uptime_maintenance` | write (overwrites data) | `PATCH /v1/uptime/{uptimeId}`, `GET /v1/uptime/{uptimeId}` | `check_id`, `enabled` | Start or end a maintenance window on an uptime check and return it. |
+| `update_uptime_check` | write (overwrites data) | `PATCH /v1/uptime/{uptimeId}`, `GET /v1/uptime/{uptimeId}` | `check_id` | Change fields of an uptime check (partial update) and return it; tag_ids replaces the whole list. |
 
 ## projects
 
@@ -191,7 +191,7 @@ Not in the default set: add it to `GORELO_TOOLSETS`. Needs the `Documents` scope
 | `export_document_pdf` | read | `GET /v1/documents/{documentId}/pdf` | `document_id` | Download one document as a PDF (10 MB cap): a short summary plus the PDF as an embedded file, rendered from the current version (the title as a heading, then the body). |
 | `get_document` | read | `GET /v1/documents/{documentId}` | `document_id` | Get one document in full: the HTML Body of the current version, Children, Attachments, RelatedItems, the sharing flags and PublicLinkUrl. |
 | `get_document_version` | read | `GET /v1/documents/{documentId}/versions/{versionId}` | `document_id`, `version_id` | Get one version of a document with its HTML Body and Attachments (urls carry a time-limited token: never store them). |
-| `list_document_related_items` | read | `GET /v1/documents/{documentId}/related-items` | `document_id` | List the records a document is linked to, not paged: Id (the link itself, what remove_document_related_item, when deletes are enabled, takes), ItemId (a GUID, or a number for a contact) and ItemType (1 Document, 2 Custom asset, 3 Contact, 4 Device, 5 Structured document, 6 Password). |
+| `list_document_related_items` | read | `GET /v1/documents/{documentId}/related-items` | `document_id` | List the records a document is linked to, not paged: Id (the link itself, what remove_document_related_item, when deletes are enabled, takes), ItemId (a GUID, or a number for a contact) and ItemType (1 Document, 2 Custom asset, 3 Contact, 4 Agent asset, 5 Structured document, 6 Password). |
 | `list_document_versions` | read | `GET /v1/documents/{documentId}/versions` | `document_id` | List a document's saved versions, newest first: VersionId, IsCurrent, Title, EditedById (0: written through the API) and EditedOn. |
 | `list_documents` | read | `GET /v1/documents` | none | List documents (client and internal), one page at a time. |
 | `move_document` | write (overwrites data) | `PATCH /v1/documents/{documentId}` | `document_id` | Move a document under another document, or to the top level of a client or of the internal documents, and return its updated record. |

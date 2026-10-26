@@ -2,6 +2,24 @@
 
 All notable changes to this project are listed here, newest first, in the plain style of Keep a Changelog.
 
+## Unreleased (2026-10-23 API compatibility)
+
+- Refresh the public OpenAPI snapshot to 125 operations and 333 schemas (contract `05200951c89e`).
+- Follow the renamed agent asset and uptime path parameters without changing the public `agent_id` or `check_id` inputs.
+  Agent deletion remains forbidden; the live harness retains its existing restrictions.
+- `update_contact` preserves secondary emails by omission, following the new contract. Explicit clearing sends `[]`.
+  `clear_fields=["location_id"]` is now refused because omission preserves the location and its clear value is undocumented;
+  use the Gorelo app to clear a location. Other optional fields still need the existing read/merge to preserve them.
+- Require a caller-supplied reason when enabling uptime maintenance, as the current API specifies.
+- Use the agent status names Online and Offline, allow agent assets (type 10) in `list_deletions`, and accept
+  `documentOrder` in `list_documents`. New documents now have `UpdatedOn` set at creation. Archiving covers all descendants; restoring the parent leaves them archived.
+- Keep the document related-item input `device` compatible with type 4, now named Agent asset in Gorelo.
+- Explain the newly published accounting propagation of invoice voids alongside the older conflicting Xero observation.
+  Tool prompts and live-harness reminders require verifying accounting status before any manual void.
+- Update offline regression coverage and optional live-harness assumptions. No live write tests were run.
+- Leave new inventory/scripts tools, asset fields, group access controls and extra alert/ticket filters for separate feature work.
+  Existing deprecated aliases remain supported by Gorelo.
+
 ## 1.3.0 (2026-10-17)
 
 Follows the Gorelo Public API description of 2026-10-17 (117 operations, contract a7954b24844b), which adds documents, a feed of

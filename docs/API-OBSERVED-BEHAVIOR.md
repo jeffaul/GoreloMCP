@@ -302,3 +302,16 @@ the live test harness (`docs/why/07-live-test-harness.txt`) is run after any Gor
 - Production did: not probed beyond the published shape; a hidden field has not been tested live.
 - This server: `update_client` confirms a saved hidden field by `IsSet` alone and says that the
   value was not read back.
+
+
+## 26. October 23 contract review (2026-10-23; no live writes)
+
+The current published specification supersedes several earlier assumptions. Omitted LocationId and SecondaryEmail in
+UpdateContactCommand preserve those values; [] clears secondary emails. A reason is required when enabling uptime
+maintenance. Documents have UpdatedOn at creation; archive covers every descendant, and restoring a parent leaves
+its descendants archived. Those behaviors were reviewed against the current public spec, not probed with writes.
+
+The invoice DELETE text now says its status change is sent to the connected accounting system. This differs from the
+older Xero observation recorded above. Tool prompts and live-harness reminders now require verifying accounting status
+before any manual void, rather than assuming the copy stays open or that the void necessarily propagated. No accounting
+write was attempted to resolve that discrepancy.

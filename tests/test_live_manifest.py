@@ -880,7 +880,7 @@ DELETE_ROUTES = {
     "/v1/tickets/{ticketId}/comments/{commentId}": envelope({"Id": "x"}),
     "/v1/time-entries/{timeEntryId}": envelope({"Id": TIME_ENTRY, "Outcome": "Deleted"}),
     "/v1/items/{itemId}": envelope({"Id": ITEM}),
-    "/v1/uptime/{checkId}": envelope({"Id": UPTIME}),
+    "/v1/uptime/{uptimeId}": envelope({"Id": UPTIME}),
     "/v1/projects/{projectId}": envelope({"Id": PROJECT}),
     "/v1/projects/{projectId}/tasks/{taskId}": envelope({"Id": TASK}),
     "/v1/projects/{projectId}/tasks/{taskId}/comments/{commentId}": envelope({"Id": PROJECT_COMMENT}),
@@ -1876,12 +1876,11 @@ APPROVED = {"Id": 5, "Name": "Approved"}
 VOID = {"Id": 4, "Name": "Void"}
 VOIDED = "(still listed as Void)"
 # Gorelo's void does not reach the accounting system (seen with Xero), so the
-# cleanup says twice that its own void is in Gorelo only. Both texts are spelled out here, not read from the module, so that
+# cleanup says twice that its own accounting status must be verified after the void. Both texts are spelled out here, not read from the module, so that
 # a change of their words fails these tests.
-GORELO_ONLY = "this voids it in Gorelo only: void its copy in the accounting system by hand too"  # next to the command
+GORELO_ONLY = "verify accounting status after this void before any manual void"  # next to the command
 REMINDER = (  # the line of the report for each invoice this cleanup voided
-    "the void is in Gorelo only: check the accounting system and void the invoice there too "
-    "(Gorelo's void is not pushed to the connected accounting system, seen with Xero)"
+    "Gorelo now says the void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void"
 )
 
 
@@ -2342,15 +2341,13 @@ async def test_a_second_cleanup_after_a_void_has_no_reminder_to_give(manifest, m
     assert second.ok and second.voided == [] and not any(line.startswith("reminder:") for line in lines)
 
 
-def test_the_texts_of_the_cleanup_say_that_its_void_is_in_gorelo_only():
+def test_the_texts_of_the_cleanup_require_verifying_accounting_after_a_void():
     module = " ".join(cleanup.__doc__.split())
     assert (
-        "its outcome says to check it there, gives this command with --void-approved and says that the command voids in "
-        "Gorelo only (VOID_COMMAND_NOTE: its copy in the accounting system is voided by hand too)"
+        "its outcome says to check it there, gives this command with --void-approved and says to verify accounting status after this void (VOID_COMMAND_NOTE)"
     ) in module
     assert (
-        "Whatever this cleanup voids it voids in Gorelo only: the copy that Gorelo had pushed to the accounting system "
-        "was not voided there (seen with Xero), so it is the operator's to void there."
+        "Gorelo now says a void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void."
     ) in module
     assert (
         "the report ends, just before its result line, with a reminder (VOID_REMINDER) for each invoice THIS cleanup voided"

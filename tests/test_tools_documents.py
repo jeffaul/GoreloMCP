@@ -2504,7 +2504,8 @@ async def test_the_docstrings_state_the_facts_the_model_must_know(server):
     assert "time-limited token" in tools["get_document"]
     assert "10 MB cap" in tools["export_document_pdf"] and "no export event" in tools["export_document_pdf"]
     assert "Active ones only unless status_ids includes 2" in tools["list_documents"]
-    assert "Gorelo's texts disagree" in tools["archive_document"] and "assume the whole tree" in tools["archive_document"]
+    assert "archives every document below it, at any depth" in tools["archive_document"]
+    assert "documents archived under it stay archived" in tools["restore_document"]
     assert "TOP level" in tools["archive_document"] and "TOP level" in tools["restore_document"]
     assert "refuses one that is not archived" in tools["restore_document"]
     assert "Give exactly one place" in tools["create_document"] and "added to its related items" in tools["create_document"]
@@ -2522,7 +2523,7 @@ async def test_the_docstrings_state_the_facts_the_model_must_know(server):
     assert "Archiving is not unsharing: unshare_document turns sharing off" in tools["archive_document"]
     assert "If it or a document under it is shared, check who can now see it" in tools["move_document"]
     assert "takes one out of the default list" in tools["create_document"]
-    assert "make two calls, one with updated_since and one with created_since" in tools["list_documents"]
+    assert "updated_since includes new documents at their creation time" in tools["list_documents"]
     for name in GATED:
         assert "Ask the user first; needs confirm=true." in tools[name]
 
@@ -2558,5 +2559,12 @@ async def test_the_sort_by_enum_has_the_member_order_the_other_list_tools_pin(se
     # ["updatedOn", "createdOn"], and tools/documents.py (imported before both) must declare them in that order
     tools = {t.name: t for t in await list_tools(server)}
     for name in ("list_documents", "list_projects", "list_tickets"):
-        assert tools[name].inputSchema["properties"]["sort_by"]["enum"] == ["updatedOn", "createdOn"], name
+        assert tools[name].inputSchema["properties"]["sort_by"]["enum"] == (["updatedOn", "createdOn", "documentOrder"] if name == "list_documents" else ["updatedOn", "createdOn"]), name
     assert tools["list_documents"].inputSchema["properties"]["sort_order"]["enum"] == ["asc", "desc"]
+
+
+async def test_list_documents_sends_document_order_with_its_parent(server, mock_gorelo):
+    mock_gorelo.on("GET", "/v1/documents", paged_envelope([], total_count=0))
+    await call_tool(server, "list_documents", {"sort_by": "documentOrder", "parent_document_id": PARENT})
+    assert mock_gorelo.last.query["SortBy"] == "documentOrder"
+    assert mock_gorelo.last.query["ParentDocumentId"] == PARENT

@@ -80,7 +80,7 @@ def test_every_field_map_path_is_a_body_field_of_the_op(spec_index):
     assert spec.field_map == {
         "name": "Name", "client_id": "ClientId", "resource": "Resource", "severity": "Severity", "description": "Description",
     }
-    assert set(spec.field_map.values()) == set(op.body["fields"])
+    assert set(spec.field_map.values()) == set(op.body["fields"]) - {"AgentAssetId", "CustomAssetId", "UptimeId"}
     assert set(op.body["required"]) <= set(spec.field_map.values())
 
 
@@ -404,6 +404,9 @@ def alert_row(n=1, **extra):
         "Message": "",
         "ClientId": None,  # an external alert carries no client id
         "DeviceId": None,
+        "AgentAssetId": None,
+        "CustomAssetId": None,
+        "UptimeId": None,
         "CheckId": None,
         "UptimeCheckId": None,
         "TicketId": None,
@@ -450,7 +453,7 @@ def test_the_module_declares_exactly_the_two_alert_tools_and_names_both_ops():
 def test_every_query_name_of_the_op_is_a_filter_or_a_paging_name_of_the_tool(spec_index):
     spec = next(s for s in REGISTRY.specs if s.name == "list_alerts")
     op = spec_index.op("GET /v1/alerts")
-    assert set(spec.field_map.values()) == set(op.query_params)  # nothing the spec offers is left out, nothing invented
+    assert set(spec.field_map.values()) == set(op.query_params) - {"AgentAssetIds", "CustomAssetIds", "UptimeIds"}  # new optional filters are deferred
     assert spec.field_map["page_size"] == "PageSize" and spec.field_map["cursor"] == "Cursor"
     assert set(alerts_module.FILTER_FIELDS) == set(LIST_PARAMS) - {"page_size", "cursor"}
 
@@ -951,3 +954,10 @@ async def test_the_post_alert_docstring_and_the_list_alerts_docstring_name_each_
     posting = " ".join(inspect.getdoc(alerts_module.post_alert).split())
     listing = " ".join(inspect.getdoc(alerts_module.list_alerts).split())
     assert "list_alerts" in posting and "post_alert" in listing
+
+
+async def test_alert_asset_identifiers_are_returned_without_dropping_legacy_aliases(server, mock_gorelo):
+    row = alert_row(9, AgentAssetId=uid(7), DeviceId=uid(7), CustomAssetId=uid(8), UptimeId=uid(10), UptimeCheckId=uid(10))
+    mock_gorelo.on("GET", "/v1/alerts", paged_envelope([row], total_count=1))
+    result = await call_tool(server, "list_alerts")
+    assert result["items"] == [row]

@@ -130,6 +130,7 @@ def command(**overrides):
         "Department": "IT",
         "TimeZone": "UTC",
         "Description": "Notes",
+        "SecondaryEmail": [],
     }
     body.update(overrides)
     return {key: value for key, value in body.items() if value is not None}
@@ -289,17 +290,15 @@ async def test_each_id_description_names_the_tool_that_resolves_it(server, name,
     assert resolver in tool.inputSchema["properties"][param]["description"]
 
 
-def test_the_update_docstring_explains_the_replace_semantics_and_sends_the_secondary_email_choice_through_the_user():
+def test_the_update_docstring_explains_preservation_and_explicit_secondary_email_clearing():
     doc = flat(contacts_module.update_contact.__doc__)
-    assert "replaces the whole contact" in doc and "reads it first" in doc
+    assert "Reads the contact first to preserve omitted phones" in doc
     assert "the client cannot change" in doc
-    # the API cannot show the secondary emails, only the user can see them, so the user decides
-    assert "The API cannot show a contact's secondary emails (only the user can see them in the Gorelo app)" in doc
-    assert "ask the user for the complete list, pass it as secondary_email (replaces ALL existing ones; [] erases)" in doc
-    assert "or ask the user before passing clear_secondary_email_ok=true" in doc
-    assert "Without either the call is refused before anything is sent" in doc
-    assert "Side effects: overwrites the contact" in doc and "an app edit made between the read and the write is lost" in doc
-    assert "never returns secondary emails" not in doc  # the old wording said nothing about asking the user
+    assert "Omitting both secondary email inputs preserves those unreadable addresses" in doc
+    assert "ask the user for the complete secondary_email list; [] erases all" in doc
+    assert "Ask the user before clear_secondary_email_ok=true" in doc
+    assert "Location clearing is unavailable here" in doc
+    assert "Side effects: overwrites the contact" in doc and "an app edit between the read and write is lost" in doc
 
 
 async def test_the_update_parameters_explain_clear_fields_and_the_secondary_email_flag(server):
@@ -320,12 +319,9 @@ async def test_the_update_parameters_explain_clear_fields_and_the_secondary_emai
     assert "replaces ALL existing ones ([] erases)" in secondary
     assert "The API cannot show them, only the user can see them in the Gorelo app: ask the user." in secondary
     flag = props["clear_secondary_email_ok"]["description"]
-    assert "True erases ALL secondary emails when secondary_email is omitted" in flag
-    assert "Ask the user first" in flag
-    assert "the API cannot show them, only the user can see them in the Gorelo app" in flag
-    for text in (secondary, flag):  # both parameters say the same three things
-        assert "API cannot show them" in text and "only the user can see them in the Gorelo app" in text
-        assert "ask the user" in text.lower()
+    assert "True sends [] to erase ALL secondary emails if secondary_email is omitted" in flag
+    assert "False preserves them" in flag and "Ask first" in flag
+    assert "only the user can see them in the Gorelo app" in flag
 
 
 def test_the_create_docstring_says_nothing_is_inferred():
@@ -861,7 +857,7 @@ async def test_update_contact_sends_every_command_field_and_never_a_read_only_on
     routed_update(mock_gorelo)
     await call_tool(server, "update_contact", {"contact_id": 5, "department": "Ops", "clear_secondary_email_ok": True})
     body = patched(mock_gorelo)[0].json
-    assert set(body) == COMMAND_KEYS
+    assert set(body) == COMMAND_KEYS | {"SecondaryEmail"}
     assert not set(body) & READ_ONLY_KEYS
     op = spec_index.op("PATCH /v1/contacts/{contactId}")
     assert set(body) <= set(op.body["fields"]) and set(op.body["required"]) <= set(body)
@@ -890,10 +886,10 @@ async def test_update_contact_omits_the_values_the_contact_does_not_have_and_sen
     body = patched(mock_gorelo)[0].json
     assert body == {
         "FirstName": "Jane", "LastName": "Smith", "ClientId": 9101,
-        "PrimaryEmail": "jane.doe@example.invalid",
+        "PrimaryEmail": "jane.doe@example.invalid", "SecondaryEmail": [],
     }
     assert None not in body.values()  # no value of the body is null
-    assert set(body) == REQUIRED_KEYS and not set(body) & OPTIONAL_KEYS
+    assert set(body) == REQUIRED_KEYS | {"SecondaryEmail"} and not set(body) & OPTIONAL_KEYS
 
 
 async def test_update_contact_copies_empty_strings_from_the_record_as_they_are(server, mock_gorelo):
@@ -968,7 +964,6 @@ async def test_several_changes_are_applied_in_one_command(server, mock_gorelo):
 @pytest.mark.parametrize(
     "param, key",
     [
-        ("location_id", "LocationId"),
         ("mobile_phone", "MobilePhone"),
         ("office_phone", "OfficePhone"),
         ("job_title", "JobTitle"),
@@ -1008,10 +1003,10 @@ async def test_every_clearable_field_can_be_cleared_at_once(server, mock_gorelo)
     )
     body = patched(mock_gorelo)[0].json
     assert body == command(
-        LocationId=None, MobilePhone=None, MobilePhoneCountryCode=None, OfficePhone=None,
+        MobilePhone=None, MobilePhoneCountryCode=None, OfficePhone=None,
         OfficePhoneCountryCode=None, JobTitle=None, Department=None, TimeZone=None, Description=None,
     )
-    assert set(body) == REQUIRED_KEYS  # every optional field is gone, the four required ones remain with values
+    assert set(body) == REQUIRED_KEYS | {"LocationId", "SecondaryEmail"}  # replacement fields are cleared, the four required ones remain with values
 
 
 async def test_a_repeated_name_in_clear_fields_is_cleared_once(server, mock_gorelo):
@@ -1045,7 +1040,7 @@ CANNOT_BE_CLEARED = [
     (["last_name"], "clear_fields: last_name cannot be cleared because Gorelo requires it"),
     (["primary_email"], "clear_fields: primary_email cannot be cleared because Gorelo requires it"),
     (["secondary_email"], "clear_fields: secondary_email is not cleared through clear_fields; pass secondary_email=[]"),
-    (["client_id"], "clear_fields: unknown field 'client_id'; accepted: location_id, mobile_phone,"),
+    (["client_id"], "clear_fields: unknown field 'client_id'; accepted: mobile_phone,"),
     (["JobTitle"], "clear_fields: unknown field 'JobTitle'"),
     (["job_title", "bogus"], "clear_fields: unknown field 'bogus'"),
 ]
@@ -1129,51 +1124,26 @@ async def test_a_blank_required_value_is_rejected_and_cannot_be_cleared(server, 
 # --------------------------------------------------------------------------
 
 
-REFUSAL = (
-    "secondary_email: refusing to update contact 5 until the user has decided what happens to its secondary emails. "
-    "Gorelo's PATCH /v1/contacts/{contactId} replaces the whole contact and the API cannot show a contact's secondary emails "
-    "(only the user can see them in the Gorelo app), so this update would erase them. Ask the user first, do not "
-    "retry on your own. Either ask which complete list of secondary emails the contact should have afterwards and "
-    "pass it as secondary_email (it replaces ALL existing ones; [] erases them), or ask whether erasing all of them "
-    "is acceptable and only if the user says yes pass clear_secondary_email_ok=true. Nothing has been sent to Gorelo."
-)
+@pytest.mark.parametrize("explicit_false", [False, True])
+async def test_omitted_secondary_emails_are_preserved_by_omission(server, mock_gorelo, explicit_false):
+    routed_update(mock_gorelo)
+    args = {"contact_id": 5, "job_title": "CTO"}
+    if explicit_false:
+        args["clear_secondary_email_ok"] = False
+    await call_tool(server, "update_contact", args)
+    assert "SecondaryEmail" not in patched(mock_gorelo)[0].json
 
 
-async def test_without_a_secondary_email_decision_the_update_is_refused_before_any_http_call(server, mock_gorelo):
-    text = await call_tool_error(server, "update_contact", {"contact_id": 5, "job_title": "CTO"})
-    assert flat(text) == REFUSAL
-    assert mock_gorelo.requests == []  # not even the read
-
-
-async def test_the_refusal_sends_the_secondary_email_choice_through_the_user(server, mock_gorelo):
-    # the wording is pinned piece by piece, so that none of it can drift back into a hint to retry
-    message = flat(await call_tool_error(server, "update_contact", {"contact_id": 5, "job_title": "CTO"}))
-    assert message.startswith("secondary_email: refusing to update contact 5 until the user has decided")
-    assert "the API cannot show a contact's secondary emails (only the user can see them in the Gorelo app)" in message
-    assert "this update would erase them" in message
-    assert "Ask the user first, do not retry on your own." in message
-    assert "ask which complete list of secondary emails the contact should have afterwards" in message
-    assert "(it replaces ALL existing ones; [] erases them)" in message
-    assert "ask whether erasing all of them is acceptable and only if the user says yes pass clear_secondary_email_ok=true" in message
-    assert message.endswith("Nothing has been sent to Gorelo.")
-    # the flag is never offered on its own as the way out: asking the user comes first, in the same breath
-    assert message.index("Ask the user first") < message.index("clear_secondary_email_ok=true")
-    assert "Two ways forward" not in message
-    assert "pass clear_secondary_email_ok=true to accept" not in message
-    assert "if you want to keep them" not in message  # the old text told the model to read them itself in the app
-    assert mock_gorelo.requests == []
-
-
-async def test_an_explicit_false_is_the_same_as_no_decision(server, mock_gorelo):
-    text = await call_tool_error(server, "update_contact", {"contact_id": 5, "job_title": "CTO", "clear_secondary_email_ok": False})
-    assert text.startswith("secondary_email: refusing to update contact 5")
-    assert mock_gorelo.requests == []
-
-
-async def test_clear_secondary_email_ok_accepts_the_loss_and_sends_no_secondary_email_field(server, mock_gorelo):
+async def test_explicit_secondary_email_clear_sends_empty_array(server, mock_gorelo):
     routed_update(mock_gorelo)
     await call_tool(server, "update_contact", {"contact_id": 5, "job_title": "CTO", "clear_secondary_email_ok": True})
-    assert "SecondaryEmail" not in patched(mock_gorelo)[0].json
+    assert patched(mock_gorelo)[0].json["SecondaryEmail"] == []
+
+
+async def test_location_clear_is_refused_without_http_until_documented(server, mock_gorelo):
+    text = await call_tool_error(server, "update_contact", {"contact_id": 5, "clear_fields": ["location_id"]})
+    assert "clear_fields" in text
+    assert mock_gorelo.requests == []
 
 
 async def test_a_secondary_email_list_is_sent_whole_and_needs_no_flag(server, mock_gorelo):
@@ -1422,7 +1392,7 @@ SPARSE_RECORD = {
         pytest.param({"job_title": "CTO"}, id="change-one"),
         pytest.param({"clear_fields": ["department", "description"]}, id="clear-two"),
         pytest.param({"clear_fields": list(contacts_module.CLEARABLE_FIELDS)}, id="clear-all"),
-        pytest.param({"job_title": "CTO", "clear_fields": ["location_id"]}, id="change-and-clear"),
+        pytest.param({"job_title": "CTO", "clear_fields": ["department"]}, id="change-and-clear"),
         pytest.param({"secondary_email": ["a@example.invalid"]}, id="secondary-email-list"),
         pytest.param({"secondary_email": []}, id="secondary-email-erased-explicitly"),
     ],
@@ -1445,6 +1415,8 @@ async def test_the_body_never_carries_a_null_whatever_the_record_and_the_clearin
         expected["JobTitle"] = extra["job_title"]
     if "secondary_email" in extra:
         expected["SecondaryEmail"] = extra["secondary_email"]
+    if arguments.get("clear_secondary_email_ok") is True and "secondary_email" not in extra:
+        expected["SecondaryEmail"] = []
     assert body == expected
     assert REQUIRED_KEYS <= set(body) and None not in body.values()
     assert isinstance(body.get("SecondaryEmail", []), list)  # an erased list is [], not null

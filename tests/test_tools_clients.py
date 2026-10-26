@@ -196,7 +196,7 @@ def test_every_query_name_of_a_list_tool_is_a_query_param_of_the_op(name, spec_i
     spec = next(s for s in REGISTRY.specs if s.name == name)
     op = spec_index.op(spec.ops[0])
     allowed = {q.lower() for q in op.query_params}
-    assert {path.lower() for path in spec.field_map.values()} == allowed
+    assert {path.lower() for path in spec.field_map.values()} == allowed - ({"groupids"} if name == "list_clients" else set())
 
 
 @pytest.mark.parametrize("name", sorted(TOOLS))
@@ -892,7 +892,7 @@ def test_update_client_declares_the_published_operation_and_no_override_is_invol
     assert "PATCH /v1/clients" not in spec_index.ops  # the collection form is gone from the published spec
     op = spec_index.op("PATCH /v1/clients/{clientId}")
     assert op.path_params == {"clientId": {"type": "integer", "format": "int64"}}
-    assert set(op.body["fields"]) == {"Name", "StatusId", "BillingName", "AlternateName", "CustomProperties"}
+    assert set(op.body["fields"]) == {"Name", "StatusId", "BillingName", "AlternateName", "CustomProperties", "GroupIds"}
     assert op.body["required"] == []
     assert "Id" not in op.body["fields"]
     custom = op.body["fields"]["CustomProperties"]  # contract 1b1c0cec0e9a: an upsert by Id, null Value clears

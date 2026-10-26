@@ -33,7 +33,7 @@ FILTERS = ["query", "created_since", "created_before", "updated_since", "updated
 TOOLS = {
     # name: (ops, parameters in order, required parameters)
     "list_agents": (["GET /v1/assets/agents"], ["status_ids", "client_ids", *FILTERS], []),
-    "get_agent": (["GET /v1/assets/agents/{deviceId}"], ["agent_id"], ["agent_id"]),
+    "get_agent": (["GET /v1/assets/agents/{agentAssetId}"], ["agent_id"], ["agent_id"]),
     "list_custom_assets": (["GET /v1/assets/custom"], ["client_ids", *FILTERS], []),
     "get_custom_asset": (["GET /v1/assets/custom/{customAssetId}"], ["custom_asset_id"], ["custom_asset_id"]),
 }
@@ -44,7 +44,7 @@ WRITE_TOOLS = {
 }
 
 # The device status scale of list_agents: the StatusIds text of the spec (pinned by test_the_device_status_scale_is_the_one_in_the_spec_text).
-AGENT_SCALE = "1 Unreachable, 2 Active, 3 Inactive, 4 Pending Delete, 6 Pending client inactive"
+AGENT_SCALE = "1 Unreachable, 2 Online, 3 Offline, 4 Pending Delete, 6 Pending client inactive"
 
 ALL_DATES = {
     "created_since": "2026-01-01T00:00:00Z",
@@ -155,8 +155,8 @@ def test_every_query_name_of_a_list_tool_is_a_query_param_of_its_op(name, spec_i
 
 def test_the_field_map_of_get_agent_names_the_path_placeholder(spec_index):
     spec = next(s for s in REGISTRY.specs if s.name == "get_agent")
-    assert spec.field_map == {"agent_id": "deviceId"}
-    assert set(spec.field_map.values()) == set(spec_index.op("GET /v1/assets/agents/{deviceId}").path_placeholders)
+    assert spec.field_map == {"agent_id": "agentAssetId"}
+    assert set(spec.field_map.values()) == set(spec_index.op("GET /v1/assets/agents/{agentAssetId}").path_placeholders)
 
 
 def test_the_field_map_of_get_custom_asset_names_the_path_placeholder(spec_index):
@@ -166,12 +166,12 @@ def test_the_field_map_of_get_custom_asset_names_the_path_placeholder(spec_index
 
 
 def test_the_single_agent_is_the_list_row_fields_plus_custom_properties_in_the_spec(spec_index):
-    """The module text says the single record (DeviceResponse) is a list row (DeviceListItemResponse) plus CustomProperties,
+    """The module text says the single record (AgentAssetResponse) is a list row (AgentAssetListItemResponse) plus CustomProperties,
     which the list deliberately leaves out. The two had exactly the same fields until contract 1b1c0cec0e9a (2026-10-14).
     IsHidden joined CustomPropertyValue on 2026-10-17."""
-    assert spec_index.op("GET /v1/assets/agents").response["data"] == "[DeviceListItemResponse]"
-    assert spec_index.op("GET /v1/assets/agents/{deviceId}").response["data"] == "DeviceResponse"
-    row, record = spec_index.schema("DeviceListItemResponse")["fields"], spec_index.schema("DeviceResponse")["fields"]
+    assert spec_index.op("GET /v1/assets/agents").response["data"] == "[AgentAssetListItemResponse]"
+    assert spec_index.op("GET /v1/assets/agents/{agentAssetId}").response["data"] == "AgentAssetResponse"
+    row, record = spec_index.schema("AgentAssetListItemResponse")["fields"], spec_index.schema("AgentAssetResponse")["fields"]
     assert row != record and set(record) - set(row) == {"CustomProperties"} and set(row) < set(record)
     assert {name: entry for name, entry in record.items() if name != "CustomProperties"} == row  # nothing else differs
     assert {"LocationId", "WarrantyStartDate", "WarrantyEndDate"} <= set(row) and "ClientLocationId" not in row
@@ -181,9 +181,9 @@ def test_the_single_agent_is_the_list_row_fields_plus_custom_properties_in_the_s
     hidden = spec_index.schema("CustomPropertyValue")["fields"]["IsHidden"]
     assert (hidden["type"], hidden["nullable"]) == ("boolean", False)
     # no operation updates a device, so nothing in this module could write a custom property of one
-    assert {op.method for op in spec_index.ops.values() if op.path == "/v1/assets/agents/{deviceId}"} == {"GET", "DELETE"}
+    assert {op.method for op in spec_index.ops.values() if op.path == "/v1/assets/agents/{agentAssetId}"} == {"GET", "DELETE"}
     doc = flat(assets_module.__doc__)
-    assert "DeviceListItemResponse" in doc and "DeviceResponse" in doc and "the same fields" not in doc
+    assert "AgentAssetListItemResponse" in doc and "AgentAssetResponse" in doc and "the same fields" not in doc
     assert "the list row's fields plus CustomProperties" in doc and "which the list deliberately leaves out" in doc
     assert "Gorelo has no operation that updates a device" in doc
     assert "IsHidden" in doc and "Value is then always null" in doc
@@ -204,14 +204,14 @@ def test_the_deleted_and_inactivated_device_promise_is_the_one_in_the_spec_text(
 
 
 def test_no_tool_can_delete_an_asset_and_agents_stay_read_only():
-    agent_ops = {"GET /v1/assets/agents", "GET /v1/assets/agents/{deviceId}"}
+    agent_ops = {"GET /v1/assets/agents", "GET /v1/assets/agents/{agentAssetId}"}
     for spec in REGISTRY.specs:
         if set(spec.ops) & agent_ops:
             assert spec.kind == "read" and all(op.startswith("GET ") for op in spec.ops)
     mine = [s for s in REGISTRY.specs if any("/v1/assets/" in op for op in s.ops)]
     assert {s.name for s in mine} == set(TOOLS) | set(WRITE_TOOLS) | {"list_custom_asset_hardware_types"}
     assert not any(op.startswith("DELETE ") for s in mine for op in s.ops)
-    assert "DELETE /v1/assets/agents/{deviceId}" in FORBIDDEN_OPS and "DELETE /v1/assets/custom/{customAssetId}" in FORBIDDEN_OPS
+    assert "DELETE /v1/assets/agents/{agentAssetId}" in FORBIDDEN_OPS and "DELETE /v1/assets/custom/{customAssetId}" in FORBIDDEN_OPS
 
 
 @pytest.mark.parametrize("name", sorted(TOOLS))
@@ -552,7 +552,7 @@ async def test_get_agent_maps_a_missing_agent_to_a_tool_error(server, mock_gorel
     assert text == trace("Gorelo rejected get_agent (HTTP 404, code 070404): Device not found.")
 
 
-@pytest.mark.parametrize("property_name", ["deviceId", "DeviceId"])
+@pytest.mark.parametrize("property_name", ["agentAssetId", "AgentAssetId"])
 async def test_get_agent_maps_a_gorelo_error_about_the_id_to_agent_id(server, mock_gorelo, property_name):
     mock_gorelo.on("GET", f"/v1/assets/agents/{uid(9)}", error_envelope(400, [("070101", "The id is not valid.", property_name)]))
     text = await call_tool_error(server, "get_agent", {"agent_id": uid(9)})
@@ -568,7 +568,7 @@ async def test_get_agent_refuses_a_success_without_data(server, mock_gorelo):
 async def test_get_agent_refuses_a_record_that_is_not_an_object(server, mock_gorelo, data, found):
     mock_gorelo.on("GET", f"/v1/assets/agents/{uid(7)}", envelope(data))
     text = await call_tool_error(server, "get_agent", {"agent_id": uid(7)})
-    assert text.startswith("Gorelo returned an unexpected response for get_agent: GET /v1/assets/agents/{deviceId}: expected Data to be a non-empty object")
+    assert text.startswith("Gorelo returned an unexpected response for get_agent: GET /v1/assets/agents/{agentAssetId}: expected Data to be a non-empty object")
     assert f"but got {found}" in text and "refusing to guess" in text
 
 
@@ -963,9 +963,9 @@ def test_the_write_tools_are_declared_as_core_writes(spec_index):
 def test_the_body_field_maps_match_the_spec_commands(spec_index):
     create = next(s for s in REGISTRY.specs if s.name == "create_custom_asset")
     update = next(s for s in REGISTRY.specs if s.name == "update_custom_asset")
-    assert set(create.field_map.values()) == set(spec_index.op("POST /v1/assets/custom").body["fields"])
+    assert set(create.field_map.values()) == set(spec_index.op("POST /v1/assets/custom").body["fields"]) - {"LocalIPAddress", "Manufacturer", "Model", "WarrantyStartDate"}
     body_fields = set(spec_index.op("PATCH /v1/assets/custom/{customAssetId}").body["fields"])
-    assert set(update.field_map.values()) - {"customAssetId"} == body_fields
+    assert set(update.field_map.values()) - {"customAssetId"} == body_fields - {"LocalIPAddress", "Manufacturer", "Model", "WarrantyStartDate"}
     assert "customAssetId" in spec_index.op("PATCH /v1/assets/custom/{customAssetId}").path_placeholders
 
 
@@ -1663,3 +1663,11 @@ async def test_aultech_explicit_move_checks_expected_owner_before_writing(server
     text = await call_tool_error(server, "update_custom_asset", moving(client_id=9101))
     assert "ownership could not be verified" in text
     assert [r.method for r in mock_gorelo.requests] == ["GET"]
+
+
+async def test_get_agent_preserves_unified_fields_and_uses_the_current_path(server, mock_gorelo):
+    record = agent_record(7, DisplayName="Main server", SerialNumber="SN-7", Type={"Id": 1, "Name": "Server"}, ContactId=5, Banner="Managed")
+    mock_gorelo.on("GET", f"/v1/assets/agents/{uid(7)}", envelope(record))
+    result = await call_tool(server, "get_agent", {"agent_id": uid(7)})
+    assert result == record
+    assert mock_gorelo.last.path == f"/v1/assets/agents/{uid(7)}"

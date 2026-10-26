@@ -6,8 +6,8 @@ that were verified against the live spec on 2026-10-01 and refreshed against
 each later spec: 2026-10-02 (contract e15cb5a18ec2, 96 operations), 2026-10-08
 (56005ff28330, 98), 2026-10-12 (bce2fad59937, 103: the api-keys and custom asset
 operations), 2026-10-14 (1b1c0cec0e9a, 103 operations and 288 schemas: the
-custom properties of clients and devices) and now 2026-10-17 (a7954b24844b, 117 operations and 310 schemas:
-documents, deletions, the single custom asset). If one of them
+custom properties of clients and devices), 2026-10-17 (a7954b24844b, 117 operations and 310 schemas: documents, deletions, the single custom asset),
+and 2026-10-23 (05200951c89e, 125 operations and 333 schemas: unified assets, inventory and scripts). If one of them
 fails after a re-snapshot, Gorelo changed the API: read the report written by scripts/spec_diff.py --out FILE,
 check the raw spec, and only then decide whether the code or the assertion is wrong.
 
@@ -79,25 +79,25 @@ def _walk_keys(node, path=""):
 
 
 # --------------------------------------------------------------------------
-# Verified facts about the live spec (2026-10-17, contract a7954b24844b; the facts that did not change were first
+# Verified facts about the live spec (2026-10-23, contract 05200951c89e; the facts that did not change were first
 # verified on 2026-10-01 or 2026-10-02)
 # --------------------------------------------------------------------------
 
 
-def test_op_count_is_117(index, ops):
+def test_op_count_is_125(index, ops):
     # 96 operations in contract e15cb5a18ec2 (2026-10-02); the 2026-10-08 spec (contract 56005ff28330) added POST /v1/payments and
     # DELETE /v1/payments/{paymentId}; the 2026-10-12 spec (contract bce2fad59937) added GET /v1/api-keys, DELETE /v1/api-keys/{apiKeyId},
     # POST /v1/assets/custom, PATCH /v1/assets/custom/{customAssetId} and GET /v1/assets/custom/hardware-types; the 2026-10-14 spec
     # (contract 1b1c0cec0e9a) added no operation: it added custom properties to the client and device records and to the client update;
     # the 2026-10-17 spec (contract a7954b24844b) added fourteen: the twelve document operations, GET /v1/deletions and
     # GET /v1/assets/custom/{customAssetId}
-    assert index["op_count"] == 117
-    assert len(ops) == 117
-    assert index["contract_sha256"].startswith("a7954b24844b")
+    assert index["op_count"] == 125
+    assert len(ops) == 125
+    assert index["contract_sha256"].startswith("05200951c89e")
     # 252 schemas on 2026-10-01, 268 on 2026-10-02, 274 on 2026-10-08, 286 on 2026-10-12; the 2026-10-14 spec added two:
     # CustomPropertyUpdate and CustomPropertyValue; the 2026-10-17 spec added twenty two (310 in all: the document, deletion
     # and related item schemas)
-    assert len(index["schemas"]) == 310
+    assert len(index["schemas"]) == 333
 
 
 def test_index_has_no_description_or_summary_keys(index):
@@ -123,7 +123,7 @@ def test_unpaged_lookups_have_no_query_params(ops):
 def test_list_tickets_is_paged_with_all_filters(ops):
     tickets = ops["GET /v1/tickets"]
     assert tickets["paged"] is True
-    assert tickets["page_size_rule"] == "clamp"
+    assert tickets["page_size_rule"] == "reject"
     expected = {
         "StatusIds", "ClientIds", "PriorityIds", "TypeIds", "LeadAssigneeIds", "ContactIds",
         "TagIds", "GroupIds", "Query", "UpdatedSince", "UpdatedBefore", "CreatedSince",
@@ -144,10 +144,10 @@ def test_page_size_is_rejected_not_clamped(ops, key):
     assert ops[key]["page_size_rule"] == "reject"
 
 
-def test_exactly_23_ops_are_paged_and_paged_means_cursor(ops):
+def test_exactly_24_ops_are_paged_and_paged_means_cursor(ops):
     # GET /v1/alerts is the 19th (2026-10-02), GET /v1/api-keys the 20th (2026-10-12); the 2026-10-17 spec added GET /v1/deletions,
     # GET /v1/documents and GET /v1/documents/{documentId}/versions (a document's related items are not paged)
-    assert sum(1 for op in ops.values() if op["paged"]) == 23
+    assert sum(1 for op in ops.values() if op["paged"]) == 24
     assert ops["GET /v1/api-keys"]["paged"] is True
     assert ops["GET /v1/documents/{documentId}/related-items"]["paged"] is False
     for key, op in ops.items():
@@ -185,7 +185,7 @@ def test_update_contact_and_client_are_path_operations_whose_commands_carry_no_i
     assert client["body"]["schema"] == "UpdateClientCommand" and "Id" not in client["body"]["fields"]
     assert client["body"]["required"] == []
     # Contract 1b1c0cec0e9a (2026-10-14) added CustomProperties to the command: a nullable array of CustomPropertyUpdate, and still no Id
-    assert set(schemas["UpdateClientCommand"]["fields"]) == {"Name", "StatusId", "BillingName", "AlternateName", "CustomProperties"}
+    assert set(schemas["UpdateClientCommand"]["fields"]) == {"Name", "StatusId", "BillingName", "AlternateName", "CustomProperties", "GroupIds"}
     assert "Id" not in schemas["UpdateClientCommand"]["fields"]
     assert client["body"]["fields"]["CustomProperties"] == {
         "type": "array", "nullable": True, "items": {"ref": "CustomPropertyUpdate", "type": None}
@@ -195,9 +195,9 @@ def test_update_contact_and_client_are_path_operations_whose_commands_carry_no_i
 
 def test_custom_properties_are_returned_on_the_single_client_and_device_and_set_only_by_the_client_update(ops, schemas):
     # Contract 1b1c0cec0e9a (2026-10-14) added two schemas and three fields and no operation. CustomPropertyValue is what a
-    # single client (ClientResponse: GET, POST and PATCH of /v1/clients) and a single agent (DeviceResponse: GET
-    # /v1/assets/agents/{deviceId}) list for every custom field the provider defined; the list rows (ClientListItemResponse,
-    # DeviceListItemResponse) leave it out on purpose. CustomPropertyUpdate is one entry of the CustomProperties that PATCH
+    # single client (ClientResponse: GET, POST and PATCH of /v1/clients) and a single agent (AgentAssetResponse: GET
+    # /v1/assets/agents/{agentAssetId}) list for every custom field the provider defined; the list rows (ClientListItemResponse,
+    # AgentAssetListItemResponse) leave it out on purpose. CustomPropertyUpdate is one entry of the CustomProperties that PATCH
     # /v1/clients/{clientId} takes. Creating a client takes none and no operation updates a device.
     update = schemas["CustomPropertyUpdate"]
     assert (update["type"], update["required"], update["additional_properties"]) == ("object", [], False)
@@ -217,7 +217,7 @@ def test_custom_properties_are_returned_on_the_single_client_and_device_and_set_
         "IsHidden": {"type": "boolean", "nullable": False},  # 2026-10-17: the provider hid the value; Value is then always null
     }
     values = {"type": "array", "nullable": False, "items": {"ref": "CustomPropertyValue", "type": None}}
-    for single, row in (("ClientResponse", "ClientListItemResponse"), ("DeviceResponse", "DeviceListItemResponse")):
+    for single, row in (("ClientResponse", "ClientListItemResponse"), ("AgentAssetResponse", "AgentAssetListItemResponse")):
         assert schemas[single]["fields"]["CustomProperties"] == values
         assert "CustomProperties" not in schemas[row]["fields"]
         # a single record is its list row plus CustomProperties and nothing else
@@ -226,26 +226,26 @@ def test_custom_properties_are_returned_on_the_single_client_and_device_and_set_
     assert "CustomProperties" not in ops["POST /v1/clients"]["body"]["fields"]
     # nothing else in the spec carries custom properties: no contact, ticket, custom asset or other record, and no other body
     assert sorted(name for name, schema in schemas.items() if "CustomProperties" in schema["fields"]) == [
-        "ClientResponse", "DeviceResponse", "UpdateClientCommand",
+        "AgentAssetResponse", "ClientResponse", "UpdateClientCommand",
     ]
     assert [key for key, op in ops.items() if op["body"] and "CustomProperties" in op["body"]["fields"]] == [
         "PATCH /v1/clients/{clientId}"
     ]
-    assert sorted(key for key, op in ops.items() if op["response"]["data"] in ("ClientResponse", "DeviceResponse")) == [
-        "GET /v1/assets/agents/{deviceId}", "GET /v1/clients/{clientId}", "PATCH /v1/clients/{clientId}", "POST /v1/clients",
+    assert sorted(key for key, op in ops.items() if op["response"]["data"] in ("ClientResponse", "AgentAssetResponse")) == [
+        "GET /v1/assets/agents/{agentAssetId}", "GET /v1/clients/{clientId}", "PATCH /v1/clients/{clientId}", "POST /v1/clients",
     ]
     # a device has no update operation: its custom properties can be read, not written
-    assert sorted(op["method"] for op in ops.values() if op["path"] == "/v1/assets/agents/{deviceId}") == ["DELETE", "GET"]
+    assert sorted(op["method"] for op in ops.values() if op["path"] == "/v1/assets/agents/{agentAssetId}") == ["DELETE", "GET"]
 
 
 def test_six_families_of_path_placeholders_were_renamed_without_changing_the_urls(ops):
     renamed = {
         "/v1/clients/{clientId}": "clientId",
         "/v1/contacts/{contactId}": "contactId",
-        "/v1/assets/agents/{deviceId}": "deviceId",
+        "/v1/assets/agents/{agentAssetId}": "agentAssetId",
         "/v1/assets/custom/{customAssetId}": "customAssetId",
         "/v1/time-entries/{timeEntryId}": "timeEntryId",
-        "/v1/uptime/{checkId}": "checkId",
+        "/v1/uptime/{uptimeId}": "uptimeId",
     }
     for path, name in renamed.items():
         found = [op for op in ops.values() if op["path"] == path]
@@ -340,7 +340,7 @@ def test_the_api_key_creation_is_published_and_the_alert_list_is_paged(ops, sche
 
 def test_list_items_are_the_list_models_and_contract_dates_are_calendar_dates(ops, schemas):
     assert ops["GET /v1/clients"]["response"]["data"] == "[ClientListItemResponse]"
-    assert ops["GET /v1/assets/agents"]["response"]["data"] == "[DeviceListItemResponse]"
+    assert ops["GET /v1/assets/agents"]["response"]["data"] == "[AgentAssetListItemResponse]"
     for schema in ("ContractModel", "ContractDetailModel"):
         for field in ("StartDate", "EndDate"):
             assert schemas[schema]["fields"][field]["format"] == "date", (schema, field)
@@ -358,7 +358,7 @@ def test_ticket_list_item_renames(schemas):
 
 
 def test_device_response_renames(schemas):
-    fields = schemas["DeviceResponse"]["fields"]
+    fields = schemas["AgentAssetResponse"]["fields"]
     assert {"LocationId", "WarrantyStartDate", "WarrantyEndDate"} <= set(fields)
     assert "WarrantyExpiryDate" not in fields
 
@@ -387,26 +387,26 @@ def test_live_spec_defaults_constraints_and_security_are_in_the_index(index, ops
 
 def test_live_spec_rejects_unknown_fields_on_every_object_schema(schemas):
     # additionalProperties false on every object schema is the mechanism behind
-    # "an unknown body field is a 400" (see docs/API-OBSERVED-BEHAVIOR.md). 306 object schemas (284 until the 2026-10-17 spec, which
+    # "an unknown body field is a 400" (see docs/API-OBSERVED-BEHAVIOR.md). 329 object schemas (306 until the 2026-10-23 spec; 284 until the 2026-10-17 spec, which
     # added twenty two; 282 until the 2026-10-14 spec, which added CustomPropertyUpdate and CustomPropertyValue; 270 until the
-    # 2026-10-12 spec, 264 before the payments schemas of 2026-10-08), plus the free-form DataContext property that 82 response schemas carry (77 until the 2026-10-17 spec). The other four schemas are enums.
+    # 2026-10-12 spec, 264 before the payments schemas of 2026-10-08), plus the free-form DataContext property that 89 response schemas carry (82 until the 2026-10-23 spec), 77 until the 2026-10-17 spec. The other four schemas are enums.
     objects = {name: schema for name, schema in schemas.items() if schema["type"] == "object"}
-    assert len(objects) == 306
+    assert len(objects) == 329
     assert [name for name, schema in objects.items() if schema.get("additional_properties") is not False] == []
     assert {"CustomPropertyUpdate", "CustomPropertyValue"} <= set(objects)  # both new schemas reject unknown fields too
     data_contexts = [
         (name, field) for name, schema in schemas.items() for field, entry in schema["fields"].items()
         if entry.get("additional_properties") is False
     ]
-    assert len(data_contexts) == 82
+    assert len(data_contexts) == 89
     assert {field for _, field in data_contexts} == {"DataContext"}
 
 
 @pytest.mark.skipif(not LATEST_SPEC.exists(), reason="backups/swagger-latest.json is missing")
 def test_index_records_every_default_constraint_and_additional_properties_of_the_raw_spec(index):
     # Cross-check against the raw spec: not one occurrence may be dropped. The raw spec
-    # uses default 41 times (all on query params; 36 until the 2026-10-17 spec), minLength 23, pattern 3 (two on path
-    # params, one on a schema field) and additionalProperties 388 (all false; 361 until the 2026-10-17 spec, 359 until the
+    # uses default 44 times (all on query params; 41 until the 2026-10-23 spec; 36 until the 2026-10-17 spec), minLength 23, pattern 3 (two on path
+    # params, one on a schema field) and additionalProperties 418 (all false; 388 until the 2026-10-23 spec; 361 until the 2026-10-17 spec, 359 until the
     # 2026-10-14 spec, whose two new schemas CustomPropertyUpdate and CustomPropertyValue each state it). The live spec
     # has no property called any of these, so counting keys is exact. Request bodies repeat
     # their schemas' fields, so only schemas and params are counted in the index.
@@ -416,7 +416,7 @@ def test_index_records_every_default_constraint_and_additional_properties_of_the
         return sum(1 for node in nodes for _, key in _walk_keys(node) if key == name)
 
     raw_counts = {key: count([raw], key) for key in ("default", "minLength", "pattern", "additionalProperties")}
-    assert raw_counts == {"default": 41, "minLength": 23, "pattern": 3, "additionalProperties": 388}
+    assert raw_counts == {"default": 44, "minLength": 23, "pattern": 3, "additionalProperties": 418}
     schema_nodes = [index["schemas"]]
     param_nodes = [params for op in index["ops"].values() for params in (op["path_params"], op["query_params"])]
     assert count(param_nodes, "default") == raw_counts["default"]
@@ -425,13 +425,13 @@ def test_index_records_every_default_constraint_and_additional_properties_of_the
     assert count(schema_nodes, "additional_properties") == raw_counts["additionalProperties"]
 
 
-def test_live_spec_has_no_deprecation_composition_or_inline_objects(index):
+def test_live_spec_has_no_composition_or_inline_objects(index):
     # None of these appear in the live spec today. ("style" is not watched: since the 2026-10-08 spec Gorelo states
     # style simple or form on every path and query parameter, and the index records it.)
     # None of these appear in the live spec today. If one does, the diff reports it as a
     # constraint change; read the report, then update this assertion.
     watched = {
-        "deprecated", "read_only", "write_only", "unique_items", "one_of", "any_of", "all_of",
+        "read_only", "write_only", "unique_items", "one_of", "any_of", "all_of",
         "required_fields", "body_required", "security", "explode",
         "allow_reserved", "allow_empty_value",
     }
@@ -2564,3 +2564,16 @@ def test_both_renderings_of_the_live_contract_hash_the_same():
     assert spec_snapshot.contract_sha256(with_styles) == spec_snapshot.contract_sha256(without)
     assert build(with_styles)["contract_sha256"] == build(without)["contract_sha256"]
     assert build(with_styles)["ops"] == build(without)["ops"]
+
+
+def test_october_23_deprecated_fields_are_explicit_compatibility_aliases(index):
+    actual = {(name, field) for name, schema in index["schemas"].items()
+              for field, entry in schema["fields"].items() if entry.get("deprecated")}
+    assert actual == {
+        ("AgentAssetListItemResponse", "HardwareType"), ("AgentAssetListItemResponse", "SerialNo"),
+        ("AgentAssetResponse", "HardwareType"), ("AgentAssetResponse", "SerialNo"),
+        ("AlertListItemModel", "DeviceId"), ("AlertListItemModel", "UptimeCheckId"),
+        ("CreateCustomAssetCommand", "IpAddress"), ("UpdateCustomAssetCommand", "IpAddress"),
+        ("CustomAssetResponse", "HardwareType"), ("CustomAssetResponse", "HardwareTypeId"),
+        ("CustomAssetResponse", "IpAddress"),
+    }

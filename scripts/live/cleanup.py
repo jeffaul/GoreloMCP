@@ -34,7 +34,7 @@ it Approved, or the label search found it Approved) is voided by this cleanup ON
 the invoice it approved itself, before any cleanup runs, and the cleanup the matrix runs afterwards never does). Without
 the flag it is a leftover that needs the user, named by its DisplayNumber: Gorelo pushed it to the connected accounting
 system when it was approved, and its outcome says to check it there, gives this command with --void-approved and says
-that the command voids in Gorelo only (VOID_COMMAND_NOTE: its copy in the accounting system is voided by hand too). With
+to verify accounting status after this void (VOID_COMMAND_NOTE). With
 the flag it is voided like a Draft is deleted, with delete_invoice (expected status "Approved") or the same raw DELETE
 backstop, behind a guard that allows a DELETE of a run-created invoice recorded with status_id 5 and nothing else new,
 and the answer must say StatusId 4 (Void); anything else is a leftover. An Approved invoice that was NOT recorded as 5
@@ -48,9 +48,8 @@ was announced without an id (the answer was lost) is searched by the run label, 
 invoice whose Reference is exactly that label is a run-created record, so it is recorded in the manifest (with whatever
 status it has) and then handled by the rules above like any other invoice; nothing else is touched.
 
-Whatever this cleanup voids it voids in Gorelo only: the copy that Gorelo had pushed to the accounting system was not
-voided there (seen with Xero), so it is the operator's to void there. That is why the leftover text above
-and the help of --void-approved say that the command voids in Gorelo only (VOID_COMMAND_NOTE), and why the report ends,
+Gorelo now says a void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void. That is why the leftover text above
+and the help of --void-approved require accounting verification (VOID_COMMAND_NOTE), and why the report ends,
 just before its result line, with a reminder (VOID_REMINDER) for each invoice THIS cleanup voided. An invoice that was found
 void, or that the matrix or an earlier cleanup voided, is a known residue and gets no reminder from this one.
 
@@ -204,18 +203,14 @@ INVOICE_PAID, INVOICE_VOID, INVOICE_APPROVED = 3, 4, 5  # Paid; Void (the answer
 # Every outcome of a voided invoice ends like this. A voided invoice cannot be removed (it stays listed as Void): it is a
 # known residue, like an uploaded file, and write_matrix.py builds its own outcome from this suffix.
 VOID_RESIDUE = "(still listed as Void)"
-# Gorelo's void does not reach the accounting system: the invoice that the approved run had pushed stayed
-# open in the accounting system (seen with Xero) after the void in Gorelo, so whoever voids an Approved invoice says, right after,
-# that its copy there is the operator's to void. The write matrix says VOID_REMINDER after its own void (a note and a line
-# of its summary) and CleanupReport.render says it for each invoice this cleanup voided; write_matrix.py imports it.
+# The published October 23 accounting effect conflicts with an older Xero observation. Verify before manual action.
 VOID_REMINDER = (
-    "the void is in Gorelo only: check the accounting system and void the invoice there too "
-    "(Gorelo's void is not pushed to the connected accounting system, seen with Xero)"
+    "Gorelo now says the void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void"
 )
 # Said wherever the user is sent to `cleanup --void-approved` (the help of the flag, the leftover text of an Approved
-# invoice and the hints of the write matrix that print the command): that command voids in Gorelo only too. The write
+# invoice and the hints of the write matrix that print the command): verify accounting after that command too. The write
 # matrix imports it as well.
-VOID_COMMAND_NOTE = "this voids it in Gorelo only: void its copy in the accounting system by hand too"
+VOID_COMMAND_NOTE = "verify accounting status after this void before any manual void"
 NO_SUCH_NUMBER = "no invoice has the number"  # what delete_invoice says, before any DELETE, when its lookup finds nothing
 INVOICE_SEARCH_PAGES = 3  # pages of list_invoices read when an announced create is searched by its label
 INVOICE_SEARCH_PAGE_SIZE = 50
@@ -263,7 +258,7 @@ class CleanupReport:
     from the manifest by run_cleanup, which keeps them out of `leftovers`; the matrix prints them on a line of their own.
 
     `voided` names the invoices THIS cleanup voided (DisplayNumber, else Number, else Id, in the order it voided them): the
-    report says for each, as its last line before the result, that the void is in Gorelo only (VOID_REMINDER). An invoice
+    report says for each, as its last line before the result, that the accounting status must be verified after the void (VOID_REMINDER). An invoice
     that was found void, or that the matrix or an earlier cleanup voided, is in `undeletable` but not in `voided`."""
 
     run_id: str
@@ -699,7 +694,7 @@ class _Cleaner:
             answered = outcome.data.get("StatusId") if isinstance(outcome.data, dict) else None
             if isinstance(answered, int) and not isinstance(answered, bool) and answered == INVOICE_VOID:
                 self._note_void(ident, f"voided by the cleanup with {how} {VOID_RESIDUE}")
-                self.voided.append(name)  # in Gorelo only: the report says the accounting system keeps its copy open
+                self.voided.append(name)  # the report requests accounting verification
             else:  # a 6 would mean Gorelo called it a Draft by then: it is not what was asked, so it needs the user
                 self.manifest.cleanup_failed(
                     "invoice",
@@ -1067,8 +1062,8 @@ async def run_cleanup(
     leftovers:  also delete the leftovers listed in site.local.toml [leftovers], after checking their names.
     void_approved: also void an Approved invoice that the run recorded with status_id 5 (it is read first and must still
                 read as Approved). Without it such an invoice is a leftover for the user; the write matrix never sets it.
-                The void is in Gorelo only: the report names every invoice this call voided (`voided`) and says so for each
-                (VOID_REMINDER), because its copy in the accounting system stays open until the user voids it there.
+                Verify accounting status: the report names every invoice this call voided (`voided`) and says so for each
+                (VOID_REMINDER). The current contract says the void is sent to accounting, unlike an older Xero probe.
     settings:   default live_settings() (reads the API key from the app .env); tests pass their own. Its API host must be the
                 manifest's api_host, else SiteConfigError before any request.
     transport:  an httpx transport for BOTH clients (tests pass httpx.MockTransport); default is the network.

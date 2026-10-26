@@ -443,9 +443,9 @@ class FakeGorelo:
         r("GET", "/v1/invoices/{invoiceId}/pdf", self.get_invoice_pdf)
         r("DELETE", "/v1/invoices/{invoiceId}", self.delete_invoice)
         r("POST", "/v1/uptime", self.post_uptime)
-        r("GET", "/v1/uptime/{checkId}", lambda q: self.get_thing(q, self.uptime, "uptime check"))
-        r("PATCH", "/v1/uptime/{checkId}", self.patch_uptime)
-        r("DELETE", "/v1/uptime/{checkId}", lambda q: self.delete_thing(q, self.uptime, "uptime check"))
+        r("GET", "/v1/uptime/{uptimeId}", lambda q: self.get_thing(q, self.uptime, "uptime check"))
+        r("PATCH", "/v1/uptime/{uptimeId}", self.patch_uptime)
+        r("DELETE", "/v1/uptime/{uptimeId}", lambda q: self.delete_thing(q, self.uptime, "uptime check"))
         r("GET", "/v1/projects", self.scoped("project_scope", lambda q: self.paged(list(self.projects.values()), q)))
         r("GET", "/v1/forms", self.scoped("forms_scope", lambda q: self.paged([], q)))
         r("GET", "/v1/projects/types", self.scoped("project_scope", lambda q: envelope(self.project_types)))
@@ -525,7 +525,10 @@ class FakeGorelo:
         for required in ("PrimaryEmail", "ClientId"):
             if not q.json.get(required):
                 return error_envelope(400, [("070101", f"{required} is required.", required)])
-        self.contacts[ident] = self.contact_record(ident, q.json)  # PATCH REPLACES: whatever the body leaves out is gone
+        body = dict(q.json)
+        # Since October 23, LocationId is preserved when omitted. SecondaryEmail is unreadable here.
+        body.setdefault("LocationId", self.contacts[ident].get("LocationId"))
+        self.contacts[ident] = self.contact_record(ident, body)
         return envelope(self.contacts[ident])
 
     def delete_contact(self, q):
@@ -1425,12 +1428,12 @@ GOLDEN = {
     "uptime": [
         "GET /v1/clients/{clientId}/locations",
         "POST /v1/uptime",
-        "GET /v1/uptime/{checkId}",
-        "PATCH /v1/uptime/{checkId}",
-        "GET /v1/uptime/{checkId}",
-        "PATCH /v1/uptime/{checkId}",
-        "GET /v1/uptime/{checkId}",
-        "DELETE /v1/uptime/{checkId}",
+        "GET /v1/uptime/{uptimeId}",
+        "PATCH /v1/uptime/{uptimeId}",
+        "GET /v1/uptime/{uptimeId}",
+        "PATCH /v1/uptime/{uptimeId}",
+        "GET /v1/uptime/{uptimeId}",
+        "DELETE /v1/uptime/{uptimeId}",
     ],
     "projects": [
         "GET /v1/projects",
@@ -2109,7 +2112,7 @@ async def test_clients_an_update_that_did_not_stick_on_the_temporary_client_is_c
     assert fake.leftovers() == []  # the temporary client is still deleted by the cleanup
 
 
-async def test_contacts_the_phone_survives_the_update_and_a_missing_secondary_email_choice_is_refused_locally(run):
+async def test_contacts_the_phone_survives_the_update_and_secondary_emails_are_omitted_to_preserve_them(run):
     fake = FakeGorelo()
     report = await run(fake, areas=["contacts"])
     assert report.ok
@@ -2123,11 +2126,12 @@ async def test_contacts_the_phone_survives_the_update_and_a_missing_secondary_em
             "MobilePhone": "2025550142", "MobilePhoneCountryCode": "US",
         }
     ]
-    assert results(report)["contacts"].requests == 4  # the refused update_contact sent nothing
+    assert results(report)["contacts"].requests == 4  # create, read/merge, patch, read back
     # the id is in the path only (UpdateContactCommand has no ContactId) and the body is the whole contact
     (patch,) = [r for r in fake.mock.requests if r.method == "PATCH"]
     assert patch.path == "/v1/contacts/8301" and "ContactId" not in patch.json and patch.json["ClientId"] == TEST_CLIENT
     assert {"FirstName", "LastName", "PrimaryEmail"} <= set(patch.json)
+    assert "SecondaryEmail" not in patch.json
 
 
 async def test_contacts_an_update_that_wipes_the_phone_is_caught(run):
@@ -3612,7 +3616,7 @@ READ = "GET /v1/invoices/{invoiceId}"
 NOT_YET_SYNCED = "approved invoice INV-1042 not yet synced to accounting; check the accounting system, then void it with: "
 # Gorelo's void does not reach the accounting system, so every hint that sends the user to `cleanup --void-approved`
 # says that this command voids in Gorelo only. Spelled out here, not read from the module: a change of the words fails a test.
-GORELO_ONLY = "this voids it in Gorelo only: void its copy in the accounting system by hand too"
+GORELO_ONLY = "verify accounting status after this void before any manual void"
 
 
 def void_command(report) -> str:
@@ -5155,8 +5159,7 @@ def test_tax_problem_is_none_only_for_no_tax_and_exactly_one_dollar():
 # run pushed stayed open in Xero after Gorelo voided it)
 
 REMINDER = (
-    "the void is in Gorelo only: check the accounting system and void the invoice there too "
-    "(Gorelo's void is not pushed to the connected accounting system, seen with Xero)"
+    "Gorelo now says the void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void"
 )
 SUMMARY_REMINDER = f"reminder: approved invoice INV-1042: {REMINDER}"
 
@@ -5624,24 +5627,20 @@ def test_the_module_docstring_tells_the_rules_of_the_approved_run_as_the_code_ha
         "the wait ends only on a status other than Approved or when the 120 s run out",
         "(a read that fails is one of those polls, not a stop: the next one asks again)",
         # the void is in Gorelo only
-        "then a note that the void is in Gorelo only (check the accounting system and void the invoice there too: Gorelo's void is not "
-        "pushed to the connected accounting system, seen with Xero)",
+        "then a note to verify accounting status after the void before any manual void",
         # the hints that name the cleanup command say that it voids in Gorelo only too
         "not yet synced to accounting; check the accounting system, then void it with: python -m scripts.live.cleanup "
-        "<manifest> --void-approved (this voids it in Gorelo only: void its copy in the accounting system by hand too)\"",
+        "<manifest> --void-approved (verify accounting status after this void before any manual void)\"",
         "approved invoice <DisplayNumber> has no Number, so delete_invoice cannot find it; void it with: python -m "
-        "scripts.live.cleanup <manifest> --void-approved (this voids it in Gorelo only: void its copy in the accounting "
-        "system by hand too)\"",
-        "and the note that this voids it in Gorelo only (VOID_COMMAND_NOTE: its copy in the accounting system is voided by "
-        "hand too)",
+        "scripts.live.cleanup <manifest> --void-approved (verify accounting status after this void before any manual void)\"",
+        "and the note to verify accounting status after this void (VOID_COMMAND_NOTE)",
         "The two sentences live in scripts/live/cleanup.py (VOID_REMINDER and VOID_COMMAND_NOTE), which says the first for "
         "each invoice it voids itself and the second in its leftover text and in the help of --void-approved; every hint "
         "printed here that names that command (the area's FAIL for an invoice that never synced or has no Number, and the "
         "summary's line for an Approved invoice left over) ends with the second.",
         "The summary of the run repeats the reminder about the void, for every approved invoice of the run that was voided, "
         "as its last line before the result",
-        "a reminder line that the void is in Gorelo only: check the accounting system and void the invoice there too (Gorelo's void "
-        "is not pushed to the connected accounting system, seen with Xero)",
+        "a reminder line that Gorelo now says the void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void",
         # TaxId null is sent, and the totals are checked after the void, as a note
         "no tax: TaxId is sent as an explicit null, which the guard insists on",
         "The read after the void also checks TotalTax 0 and Total 1.0",

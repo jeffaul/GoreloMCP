@@ -33,14 +33,13 @@ Contract notes (observed on 2026-10-01, see docs/API-OBSERVED-BEHAVIOR.md):
   LastName or PrimaryEmail is null and not given by the caller (the command requires them).
 * The body never carries an explicit null. A copied value that is null is OMITTED: PATCH replaces
   the contact, so an omitted field is stored as null anyway (the probe showed it), and most of these
-  fields are not nullable in the spec. clear_fields works the same way: a cleared field is simply not
-  sent. FirstName, LastName, ClientId and PrimaryEmail are always sent with values.
-* SecondaryEmail is part of the command but is NOT returned by any read, and only the user can see a
-  contact's secondary emails (in the Gorelo app). Every update would erase them, so the choice goes
-  through the user: update_contact refuses to run until the caller passes the complete list the
-  user wants in secondary_email (it replaces ALL existing ones, [] erases them) or, after asking the user,
-  clear_secondary_email_ok=true. The refusal says to ask the user first and does not read as an invitation
-  to retry with the flag. SecondaryEmail is only sent when the caller gave secondary_email.
+  fields are not nullable in the spec. clear_fields works the same way: a supported cleared field is simply not
+  sent. LocationId is an exception: omission preserves it, so location clearing is not offered. FirstName, LastName, ClientId and PrimaryEmail are always sent with values.
+* Since the October 23 contract, omitting LocationId or SecondaryEmail preserves it. Other optional
+  fields still clear when omitted, so the read/merge remains necessary. SecondaryEmail is unreadable:
+  omit it to preserve it, send the complete list to replace it, or send [] to clear it. The explicit
+  clear_secondary_email_ok flag sends [] and must only be used when the user requested erasure.
+  Location clearing is not offered because the current contract does not document its clear value.
 * Gorelo's write endpoints answer with the full contact record (ContactResponse). create_contact and
   update_contact return it as it is. An answer that is not that record (null, {}, false, a list, or on
   create a record without an Id) is refused through created_id / expect_object (kind "shape",
@@ -146,7 +145,6 @@ UPDATE_TOOL_FIELD_MAP = {**UPDATE_FIELD_MAP, "contact_id": "contactId"}
 # the PATCH, which replaces the whole contact), and the three it can never blank (the command requires them).
 # The Literal puts the allowed names in the advertised schema, like update_item's clear_fields.
 ClearableField = Literal[
-    "location_id",
     "mobile_phone",
     "mobile_phone_country_code",
     "office_phone",
@@ -446,7 +444,7 @@ def _full_command(
 
     PATCH /v1/contacts/{contactId} replaces the whole contact, so every value the contact has must be sent. A value
     it does not have (null in the record, or cleared through clear_fields) is OMITTED, never sent as an explicit
-    null: an omitted field is stored as null anyway. FirstName, LastName, ClientId and PrimaryEmail are always sent
+    null. LocationId is preserved when omitted; other copied optional fields clear. FirstName, LastName, ClientId and PrimaryEmail are always sent
     with values. The command carries no contact id: the id is in the path. Refuses (before anything is written) a
     record that lacks a key it would have to copy: that value would be erased.
     """
@@ -539,13 +537,12 @@ async def update_contact(
     clear_secondary_email_ok: Annotated[
         StrictBool,
         Field(
-            description="True erases ALL secondary emails when secondary_email is omitted. Ask the user first: the API "
-            "cannot show them, only the user can see them in the Gorelo app."
+            description="True sends [] to erase ALL secondary emails if secondary_email is omitted. False preserves them. Ask first: only the user can see them in the Gorelo app."
         ),
     ] = False,
 ) -> dict:
     """Update a contact; returns the updated contact record. Pass only the fields to change.
-    Gorelo's PATCH replaces the whole contact, so this tool reads it first and keeps what you did not mention (the client cannot change). The API cannot show a contact's secondary emails (only the user can see them in the Gorelo app): ask the user for the complete list, pass it as secondary_email (replaces ALL existing ones; [] erases), or ask the user before passing clear_secondary_email_ok=true. Without either the call is refused before anything is sent. Side effects: overwrites the contact (visible in the app and on tickets); old values are not kept; an app edit made between the read and the write is lost.
+    Reads the contact first to preserve omitted phones and other replaced fields (the client cannot change). Omitting both secondary email inputs preserves those unreadable addresses. To replace them, ask the user for the complete secondary_email list; [] erases all. Ask the user before clear_secondary_email_ok=true, which also erases all. Location clearing is unavailable here; use the Gorelo app. Side effects: overwrites the contact in the app and on tickets; old values are not kept, and an app edit between the read and write is lost.
     """
     cid = positive_id("contact_id", contact_id)
     clear = _clear_list(clear_fields)
@@ -573,16 +570,8 @@ async def update_contact(
             "mobile_phone, mobile_phone_country_code, office_phone, office_phone_country_code, job_title, "
             "department, time_zone, description, secondary_email or clear_fields"
         )
-    if addresses is None and clear_secondary_email_ok is not True:
-        raise ValueError(
-            f"secondary_email: refusing to update contact {cid} until the user has decided what happens to its "
-            "secondary emails. Gorelo's PATCH /v1/contacts/{contactId} replaces the whole contact and the API cannot show a "
-            "contact's secondary emails (only the user can see them in the Gorelo app), so this update would "
-            "erase them. Ask the user first, do not retry on your own. Either ask which complete list of "
-            "secondary emails the contact should have afterwards and pass it as secondary_email (it replaces ALL "
-            "existing ones; [] erases them), or ask whether erasing all of them is acceptable and only if the "
-            "user says yes pass clear_secondary_email_ok=true. Nothing has been sent to Gorelo."
-        )
+    if addresses is None and clear_secondary_email_ok is True:
+        addresses = []  # omission now preserves SecondaryEmail; clearing must be explicit
     client = client_of(ctx)
     record = await client.get_one(GET_OP, path_params={"contactId": cid}, tool="update_contact")
     command = _full_command(cid, record, changes, addresses)
