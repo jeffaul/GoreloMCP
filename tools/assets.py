@@ -6,7 +6,7 @@ update_custom_asset.
 Ops owned by this module:
 
     GET /v1/assets/agents
-    GET /v1/assets/agents/{deviceId}
+    GET /v1/assets/agents/{agentAssetId}
     GET /v1/assets/custom
     GET /v1/assets/custom/{customAssetId}
     GET /v1/assets/custom/hardware-types
@@ -28,18 +28,18 @@ contact_id is given or "contact_id" is in clear_fields. The current client is no
 the new client, else the tool raises a write-unconfirmed shape error. ClientId is sent only when move_to_client_id was given.
 
 Agents carry LocationId (renamed from ClientLocationId on 2026-08-21) and WarrantyStartDate /
-WarrantyEndDate (replaced WarrantyExpiryDate the same day). The agent list rows are DeviceListItemResponse
-records and the single agent is a DeviceResponse. Since contract 1b1c0cec0e9a (2026-10-14) the single agent is
+WarrantyEndDate (replaced WarrantyExpiryDate the same day). The agent list rows are AgentAssetListItemResponse
+records and the single agent is an AgentAssetResponse. Since contract 1b1c0cec0e9a (2026-10-14) the single agent is
 the list row's fields plus CustomProperties, which the list deliberately leaves out: one entry (Id, Variable,
 Name, Type, Value, IsSet, IsHidden) for every custom field defined for devices. Value is the effective value (the saved
 one, else the field's default, else null), always text, and IsSet is true when a value is saved on the device. Since
 2026-10-17 IsHidden is true when the provider hid the field's value from the API: Value is then always null, IsSet is
 still reported. get_agent passes CustomProperties through unchanged; nothing writes them, because Gorelo has no operation
-that updates a device. The agent list takes StatusIds, checked locally against Gorelo's scale (1 Unreachable, 2 Active,
-3 Inactive, 4 Pending Delete, 6 Pending client inactive; up to 100 ids; any other value is a 400); the custom asset list
+that updates a device. The agent list takes StatusIds, checked locally against Gorelo's scale (1 Unreachable, 2 Online,
+3 Offline, 4 Pending Delete, 6 Pending client inactive; up to 100 ids; any other value is a 400); the custom asset list
 has no StatusIds, so list_custom_assets does not offer it (Gorelo rejects names an op does not declare).
 
-There are no delete tools: DELETE /v1/assets/agents/{deviceId} uninstalls the RMM agent from the host and
+There are no delete tools: DELETE /v1/assets/agents/{agentAssetId} uninstalls the RMM agent from the host and
 DELETE /v1/assets/custom/{customAssetId} is not allowed; both are in FORBIDDEN_OPS.
 """
 
@@ -74,7 +74,7 @@ from tools._common import (
 )
 
 LIST_AGENTS_OP = "GET /v1/assets/agents"
-GET_AGENT_OP = "GET /v1/assets/agents/{deviceId}"
+GET_AGENT_OP = "GET /v1/assets/agents/{agentAssetId}"
 LIST_CUSTOM_OP = "GET /v1/assets/custom"
 GET_CUSTOM_OP = "GET /v1/assets/custom/{customAssetId}"
 HARDWARE_TYPES_OP = "GET /v1/assets/custom/hardware-types"
@@ -110,9 +110,9 @@ AGENT_LIST_FIELD_MAP = {
     "cursor": "Cursor",
 }
 CUSTOM_LIST_FIELD_MAP = {name: query for name, query in AGENT_LIST_FIELD_MAP.items() if name != "status_ids"}
-# The device status scale of the StatusIds filter of GET /v1/assets/agents ("1 Unreachable, 2 Active, 3 Inactive, 4 Pending
-# Delete, 6 Pending client inactive. Up to 100 ids; any other value is a 400", spec of 2026-10-17). There is no status 5.
-AGENT_STATUS_LABELS = {1: "Unreachable", 2: "Active", 3: "Inactive", 4: "Pending Delete", 6: "Pending client inactive"}
+# The device status scale of the StatusIds filter of GET /v1/assets/agents ("1 Unreachable, 2 Online, 3 Offline, 4 Pending
+# Delete, 6 Pending client inactive. Up to 100 ids; any other value is a 400", spec of 2026-10-23). There is no status 5.
+AGENT_STATUS_LABELS = {1: "Unreachable", 2: "Online", 3: "Offline", 4: "Pending Delete", 6: "Pending client inactive"}
 AGENT_STATUS_SCALE = ", ".join(f"{status} {label}" for status, label in AGENT_STATUS_LABELS.items())
 AGENT_STATUS_IDS_MAX = 100
 AGENT_STATUS_HELP = f"Device status ids: {AGENT_STATUS_SCALE}. Up to {AGENT_STATUS_IDS_MAX} ids; any other id is refused."
@@ -135,7 +135,7 @@ CUSTOM_CLEAR_VALUES = {param: None for param in CUSTOM_CLEARABLE}
 CustomClearable = Literal["description", "contact_id", "warranty_end_date", "ip_address", "serial_number"]
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 # The path placeholder of get_agent, so that a Gorelo error about the id names agent_id.
-GET_AGENT_FIELD_MAP = {"agent_id": "deviceId"}
+GET_AGENT_FIELD_MAP = {"agent_id": "agentAssetId"}
 # The path placeholder of get_custom_asset, so that a Gorelo error about the id names custom_asset_id.
 GET_CUSTOM_FIELD_MAP = {"custom_asset_id": "customAssetId"}
 
@@ -234,7 +234,7 @@ async def get_agent(
 ) -> dict:
     """Get one agent (managed device) by UUID; returns Gorelo's full device record, including CustomProperties (a field with IsHidden true has a null Value; IsSet still says whether one is saved)."""
     aid = guid("agent_id", agent_id)
-    record = await client_of(ctx).get_one(GET_AGENT_OP, path_params={"deviceId": aid}, tool="get_agent")
+    record = await client_of(ctx).get_one(GET_AGENT_OP, path_params={"agentAssetId": aid}, tool="get_agent")
     return expect_object(record, GET_AGENT_OP, tool="get_agent")
 
 

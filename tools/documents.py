@@ -56,9 +56,8 @@ PATCH, that the token sits in the query string (if it sat in the path, an update
 locally), what the POST of related items answers (add_document_related_items reads the full list after it instead), and
 that a title or body change keeps the attachments of the new version (the tool checks the answer for it).
 
-Documents cannot be deleted through the API; archive_document is the closest thing. Gorelo's texts disagree on what an
-archive reaches ("the documents directly under it" on the PATCH, "every document below it" on the list), so the texts say
-the documents under it and do not promise more.
+Documents cannot be deleted through the API; archive_document is the closest thing. The October 23 contract confirms
+that archiving reaches every document below it, at any depth. Restoring the parent leaves the descendants archived.
 """
 
 import re
@@ -125,7 +124,7 @@ ACTIVE_STATUS_ID = 1
 ARCHIVED_STATUS_ID = 2
 STATUS_SCALE = ", ".join(f"{key} {name}" for key, name in DOCUMENT_STATUSES.items())
 
-# AddDocumentRelatedItem.ItemTypeId: 1 Document, 2 Custom asset, 3 Contact, 4 Device, 5 Structured document, 6 Password.
+# AddDocumentRelatedItem.ItemTypeId: 1 Document, 2 Custom asset, 3 Contact, 4 Agent asset, 5 Structured document, 6 Password.
 ITEM_TYPE_IDS = {
     "document": 1,
     "custom_asset": 2,
@@ -607,14 +606,14 @@ async def list_documents(
     ] = None,
     is_public_link_enabled: Annotated[bool | None, Field(description="true: public link on; false: off.")] = None,
     query: Annotated[str | None, Field(description=f"Keyword in the title, at most {QUERY_MAX} characters.")] = None,
-    updated_since: Annotated[str | None, Field(description="Updated at or after this instant. Never-updated documents are left out.")] = None,
+    updated_since: Annotated[str | None, Field(description="Updated at or after this instant; new documents have UpdatedOn set.")] = None,
     updated_before: Annotated[str | None, Field(description="Updated strictly before this instant.")] = None,
     created_since: Annotated[
         str | None, Field(description="Created at or after this instant. Restoring a version resets a document's created time.")
     ] = None,
     created_before: Annotated[str | None, Field(description="Created strictly before this instant.")] = None,
     sort_by: Annotated[
-        Literal["updatedOn", "createdOn"] | None, Field(description="Default createdOn.")
+        Literal["updatedOn", "createdOn", "documentOrder"] | None, Field(description="Default createdOn; documentOrder follows the app's sibling order (use parent_document_id).")
     ] = None,
     sort_order: Annotated[Literal["asc", "desc"] | None, Field(description="Default desc (newest first).")] = None,
     page_size: Annotated[int, Field(description="Rows per page, 1-200 (clamped).")] = 50,
@@ -623,7 +622,7 @@ async def list_documents(
         Field(description="next_cursor from the previous call; same filters and sort; repeat until has_more is false."),
     ] = None,
 ) -> dict:
-    """List documents (client and internal), one page at a time. Active ones only unless status_ids includes 2; archiving a document archives the documents under it. Rows carry Id, Title, ParentDocumentId, ClientId, Status and the sharing flags, not the body: get_document returns that. To pick up only what changed, make two calls, one with updated_since and one with created_since.
+    """List documents (client and internal), one page at a time. Active ones only unless status_ids includes 2; archiving a document archives the documents under it. Rows carry Id, Title, ParentDocumentId, ClientId, Status and the sharing flags, not the body: get_document returns that. For incremental sync, updated_since includes new documents at their creation time.
     Resolve ids first: client_ids -> list_clients; parent_document_id -> a row Id of this tool.
     Side effects: None (read-only).
     Paging: pass next_cursor back as cursor with the SAME filters until has_more is false.
@@ -743,7 +742,7 @@ async def list_document_related_items(
     ctx: Context,
     document_id: Annotated[str, Field(description=DOCUMENT_ID_TEXT)],
 ) -> dict:
-    """List the records a document is linked to, not paged: Id (the link itself, what remove_document_related_item, when deletes are enabled, takes), ItemId (a GUID, or a number for a contact) and ItemType (1 Document, 2 Custom asset, 3 Contact, 4 Device, 5 Structured document, 6 Password).
+    """List the records a document is linked to, not paged: Id (the link itself, what remove_document_related_item, when deletes are enabled, takes), ItemId (a GUID, or a number for a contact) and ItemType (1 Document, 2 Custom asset, 3 Contact, 4 Agent asset, 5 Structured document, 6 Password).
     Resolve ids first: document_id -> list_documents.
     Side effects: None (read-only).
     """
@@ -1017,7 +1016,7 @@ async def archive_document(
     ctx: Context,
     document_id: Annotated[str, Field(description=DOCUMENT_ID_TEXT)],
 ) -> dict:
-    """Archive a document and the documents under it, and return its updated record (Status 2 Archived). Gorelo's texts disagree on how far it reaches (the direct children, or every level), so assume the whole tree. Documents cannot be deleted through this server; restore_document brings one back at the TOP level, not where it was, so note ParentDocumentId from get_document first if it may have to go back.
+    """Archive a document and the documents under it, and return its updated record (Status 2 Archived). This archives every document below it, at any depth. Documents cannot be deleted through this server; restore_document brings one back at the TOP level, not where it was, so note ParentDocumentId from get_document first if it may have to go back.
     Resolve ids first: document_id -> list_documents.
     Side effects: the document and its sub-documents leave the default list and can no longer be duplicated. Archiving is not unsharing: unshare_document turns sharing off; Gorelo does not say whether an archived document stays readable through its link or the portal.
     """
@@ -1036,7 +1035,7 @@ async def restore_document(
     ctx: Context,
     document_id: Annotated[str, Field(description="Document id: the Id of an archived list_documents row (status_ids [2]).")],
 ) -> dict:
-    """Restore an ARCHIVED document and return its updated record (Status 1 Active). Gorelo puts it back at the TOP level, as the app does, not under its old parent: check ParentDocumentId in the result and use move_document to put it back. It does not say what happens to the documents that were archived under it: check with list_documents.
+    """Restore an ARCHIVED document and return its updated record (Status 1 Active). Gorelo puts it back at the TOP level, as the app does, not under its old parent: check ParentDocumentId in the result and use move_document to put it back. The documents archived under it stay archived: check with list_documents.
     Resolve ids first: document_id -> list_documents with status_ids [2].
     Side effects: the tool reads the document first and refuses one that is not archived (Gorelo's text does not say what restoring an active document does).
     """

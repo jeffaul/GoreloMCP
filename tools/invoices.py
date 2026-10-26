@@ -28,13 +28,10 @@ true. An Approved invoice whose total is exactly 0 is created as Paid; the resul
 approved tool takes recipient_emails: Gorelo does not say whether creating an invoice already emails them, so the
 draft tool has no such parameter at all.
 
-Nothing in this module takes the push back. A void through DELETE /v1/invoices/{invoiceId} happens in Gorelo ONLY:
-the DELETE answers StatusId 4 and get_invoice shows
-Void, while the copy in the connected accounting system stays open (observed with Xero). The texts of create_approved_invoice and delete_invoice therefore say that the user must void the invoice in
-the accounting system too (the docstrings, and the confirm refusals of both tools, which name the effect before
-anything is sent; delete_invoice words it for expected_status Approved only: a Draft was never pushed). A Void invoice
-can keep its AmountDue, which the texts of delete_invoice, get_invoice and list_invoices
-mention so that nobody reads it as money owed.
+Approving pushes the invoice to accounting. The October 23 contract says delete/void also sends its status
+change to the connected accounting system. An earlier Xero probe left that copy open. This has not been
+re-tested: verify the accounting status before any manual void; never assume either outcome. A Void invoice
+can keep its AmountDue: read Status first.
 
 InvoiceDate and DueDate are calendar dates (YYYY-MM-DD in the tools) and go out as <date>T00:00:00Z, the way the list
 filters send theirs and the way the spec's own example is written. The local clock is never consulted (the provider's
@@ -120,18 +117,15 @@ EXPECTED_DELETE_ANSWER = {"Draft": DELETED_STATUS_ID, "Approved": VOID_STATUS_ID
 ANSWER_SHOWS_WAS = {DELETED_STATUS_ID: "Draft", VOID_STATUS_ID: "Approved"}
 # delete_invoice only needs to know whether Number matched zero, one or several invoices.
 LOOKUP_PAGE_SIZE = 10
-# What a delete_invoice call without confirm=true says would happen, by the status the caller expects. An Approved invoice
-# has been pushed to the connected accounting system, and the void happens in Gorelo ONLY: the copy in the
-# accounting system stayed open after the DELETE answered StatusId 4 (observed with Xero). The user has to
-# hear that BEFORE confirming, so the Approved text says it; a Draft was never pushed, so its text does not.
+# Confirmation explains the current published accounting effect and the conflicting earlier observation.
 DELETE_EFFECT = {
     "Draft": (
         "A Draft invoice is deleted (no longer listed); an Approved invoice is voided (status Void, still listed). "
         "Nothing has been sent to Gorelo."
     ),
     "Approved": (
-        "An Approved invoice is voided (status Void, still listed) in Gorelo ONLY: the copy already pushed to the "
-        "accounting system stays open (observed with Xero), so the user must void it there too. "
+        "An Approved invoice is voided (status Void, still listed). Gorelo now says this status change is sent to "
+        "accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void. "
         "Nothing has been sent to Gorelo."
     ),
 }
@@ -600,13 +594,13 @@ async def create_approved_invoice(
     """Create an APPROVED invoice for a client and return it. Ids, lines, dates and reference work exactly as in
     create_invoice.
     Side effects: approving on create pushes the invoice to the connected accounting system at once. Nothing takes
-    that back: delete_invoice, when deletes are enabled, voids it in Gorelo ONLY, so the copy in the accounting
-    system stays open (observed with Xero): tell the user, who must void it there too. A total of exactly 0 is created
+    that back automatically: delete_invoice voids it. Gorelo now says the void is sent to accounting; an earlier
+    Xero probe left its copy open. Verify the accounting status before any manual void. A total of exactly 0 is created
     as Paid instead: check Status in the result.
     Emails: recipient_emails, when given, are the addresses Gorelo sends the invoice to (it does not say whether
     creating the invoice already sends it): tell the user who.
     If the result is {Id, warning} the invoice exists: do not create it again (read it with get_invoice). After a
-    "did not confirm" error check list_invoices for the client (newest first) first.
+    "did not confirm" error check list_invoices for the client first.
     Ask the user first; needs confirm=true.
     """
     request = _invoice_request(
@@ -629,9 +623,9 @@ async def create_approved_invoice(
         confirm,
         action=f"create an APPROVED invoice for client {request['ClientId']} with {lines} line{'' if lines == 1 else 's'}",
         effect=(
-            "Approving on create pushes the invoice to the connected accounting system at once, and nothing takes that "
-            "back: voiding it with delete_invoice voids it in Gorelo ONLY, so the copy in the accounting system stays "
-            f"open (observed with Xero) and the user must void it there too.{mail} Nothing has been sent to "
+            "Approving on create pushes the invoice to the connected accounting system at once. Gorelo now says "
+            "delete_invoice sends the void to accounting; an earlier Xero probe left its copy open. "
+            f"Verify the accounting status before any manual void.{mail} Nothing has been sent to "
             "Gorelo."
         ),
     )
@@ -772,8 +766,8 @@ def _delete_report(record: Mapping[str, Any], number: int, expected_status: str)
         # on create alike), so a voided invoice that was looked up as a Draft is no longer a harmless Draft
         meaning = "a Draft invoice was deleted" if status == DELETED_STATUS_ID else "an Approved invoice was voided"
         pushed = (
-            " and it had already been pushed to the connected accounting system, where the copy stays open (the void "
-            "happened in Gorelo ONLY), so the user must void it there too"
+            " and it had already been pushed to accounting; Gorelo now says the void is sent there too, but an "
+            "earlier Xero probe left its copy open. Verify the accounting status before any manual void"
             if was == "Approved"
             else ""
         )
@@ -811,7 +805,7 @@ async def delete_invoice(
     listed). Approved: voided (status Void, still listed). The result's StatusId is Gorelo's answer: 6 Deleted
     or 4 Void; previous_status is read from it too (6 was a Draft, 4 was Approved). Void is refused here (Gorelo
     itself treats deleting a void invoice as success); Paid, Submitted and others are refused by Gorelo with 409.
-    A void happens in Gorelo ONLY: the copy already pushed to the accounting system stays open (observed with Xero), so say so when you ask the user, who must void it there too. A Void invoice can still show
+    Gorelo now says the void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void. A Void invoice can still show
     AmountDue: read Status first.
     Ask the user first; needs confirm=true.
     """

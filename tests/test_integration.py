@@ -2,7 +2,7 @@
 
 These pin the tool surface: the exact tool names per toolset,
 the default exposure, destructive gating, MCP hints, LLM-facing metadata, and that every one of the
-117 spec operations (2026-10-17 contract) is either declared by a tool, forbidden, or deliberately
+125 spec operations (2026-10-23 contract) is either declared by a tool, forbidden, or deliberately
 excluded. The 2026-10-12 contract added the custom asset create, update and hardware types (declared by tools) and
 GET /v1/api-keys and DELETE /v1/api-keys/{apiKeyId} (deliberately not exposed: no tool reaches /v1/api-keys at all).
 The 2026-10-17 contract (a7954b24844b) added fourteen operations and every one has a tool: the twelve document operations
@@ -103,6 +103,15 @@ LEGACY_NAMES = {
 
 # Spec operations deliberately not exposed by any tool (besides FORBIDDEN_OPS): they cascade.
 EXCLUDED_OPS = {
+    # New October 23 inventory/script reads are deferred feature expansions.
+    "GET /v1/assets/types",
+    "GET /v1/assets/agents/{agentAssetId}/apps",
+    "GET /v1/assets/agents/{agentAssetId}/hardware",
+    "GET /v1/assets/agents/{agentAssetId}/patches",
+    "GET /v1/assets/agents/{agentAssetId}/patches/available",
+    "GET /v1/assets/agents/{agentAssetId}/tags",
+    "GET /v1/scripts",
+    "GET /v1/scripts/{scriptId}",
     "DELETE /v1/projects/{projectId}",
     "DELETE /v1/projects/{projectId}/sections/{sectionId}",
     # Added by the 2026-10-08 spec (98 operations). Money movement: no tool is built on them.
@@ -191,7 +200,7 @@ def test_every_spec_operation_is_covered_or_deliberately_excluded(spec_index):
     assert not declared & EXCLUDED_OPS
     uncovered = set(spec_index.ops) - declared - forbidden - EXCLUDED_OPS
     assert uncovered == set(), sorted(uncovered)
-    assert len(spec_index.ops) == 117
+    assert len(spec_index.ops) == 125
     assert not any("/v1/payments" in op for op in declared)  # payments are recorded money: no tool reaches them
 
 

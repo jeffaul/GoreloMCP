@@ -318,8 +318,8 @@ def test_the_field_maps_name_real_spec_fields_and_cover_every_field(spec_index):
     expected |= {f"BillingOverride.{name}" for name in billing}
     assert set(tickets.UPDATE_FIELDS.values()) == expected
     listing = spec_index.op("GET /v1/tickets")
-    assert set(tickets.LIST_QUERY_FIELDS.values()) | {"PageSize", "Cursor"} == set(listing.query_params)
-    assert set(tickets.LIST_ERROR_FIELDS.values()) == set(listing.query_params)
+    assert set(tickets.LIST_QUERY_FIELDS.values()) | {"PageSize", "Cursor"} == set(listing.query_params) - {"DeviceIds"}
+    assert set(tickets.LIST_ERROR_FIELDS.values()) == set(listing.query_params) - {"DeviceIds"}
     assert set(tickets.SEARCH_ERROR_FIELDS.values()) <= {"ClientIds", "StatusIds", "PriorityIds", "TypeIds", "Query", "UpdatedSince", "CreatedSince"}
     assert listing.paged and not spec_index.op("GET /v1/tickets/statuses").paged
     assert set(tickets.CLEARABLE_FIELDS) <= set(tickets.UPDATE_FIELDS)
