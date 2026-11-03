@@ -636,7 +636,7 @@ async def list_documents(
         Field(description="next_cursor from the previous call; same filters and sort; repeat until has_more is false."),
     ] = None,
 ) -> dict:
-    """List documents (client and internal), one page at a time. Active ones only unless status_ids includes 2; archiving a document archives the documents under it. Rows carry Id, Title, ParentDocumentId, ClientId, Status and the sharing flags, not the body: get_document returns that. To pick up only what changed, make two calls, one with updated_since and one with created_since. sort_by documentOrder is the order the app shows siblings in; use it with parent_document_id.
+    """List documents (client and internal), one page at a time. Active ones only unless status_ids includes 2; archiving a document archives the documents under it. Rows carry Id, Title, ParentDocumentId, ClientId, Status and the sharing flags, not the body: get_document returns that. For incremental sync, updated_since includes new documents at their creation time. sort_by documentOrder is the order the app shows siblings in; use it with parent_document_id.
     Resolve ids first: client_ids -> list_clients; parent_document_id -> a row Id of this tool.
     Side effects: None (read-only).
     Paging: pass next_cursor back as cursor with the SAME filters until has_more is false.

@@ -81,7 +81,7 @@ def test_every_field_map_path_is_a_body_field_of_the_op(spec_index):
         "name": "Name", "client_id": "ClientId", "resource": "Resource", "severity": "Severity", "description": "Description",
         "agent_asset_id": "AgentAssetId", "custom_asset_id": "CustomAssetId", "uptime_id": "UptimeId",
     }
-    assert set(spec.field_map.values()) == set(op.body["fields"]) - {"AgentAssetId", "CustomAssetId", "UptimeId"}
+    assert set(spec.field_map.values()) == set(op.body["fields"])
     assert set(op.body["required"]) <= set(spec.field_map.values())
 
 

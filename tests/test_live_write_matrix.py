@@ -5797,8 +5797,7 @@ def test_the_module_docstring_tells_the_rules_of_the_approved_run_as_the_code_ha
         "summary's line for an Approved invoice left over) ends with the second.",
         "The summary of the run repeats the reminder about the void, for every approved invoice of the run that was voided, "
         "as its last line before the result",
-        "a reminder line that the void is in Gorelo only: check the accounting system and void the invoice there too (Gorelo's void "
-        "is not pushed to the connected accounting system, seen with Xero)",
+        "a reminder line that Gorelo now says the void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void",
         # the tax-exempt rate is the line's TaxId, and the totals are checked after the void, as a note
         "tax_id of the tax-exempt rate, which the guard compares with the id the intent recorded",
         "exactly ONE rate with Percentage 0 whose Name or Code is exactly \"Tax Exempt\" (case-insensitive)",

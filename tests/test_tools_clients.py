@@ -238,7 +238,7 @@ def test_every_query_name_of_a_list_tool_is_a_query_param_of_the_op(name, spec_i
     spec = next(s for s in REGISTRY.specs if s.name == name)
     op = spec_index.op(spec.ops[0])
     allowed = {q.lower() for q in op.query_params}
-    assert {path.lower() for path in spec.field_map.values()} == allowed - ({"groupids"} if name == "list_clients" else set())
+    assert {path.lower() for path in spec.field_map.values()} == allowed
 
 
 # reads of 1.5.0 that state "Resolve ids first:" and "Side effects: None (read-only)." like the other new reads
