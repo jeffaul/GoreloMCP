@@ -8,7 +8,8 @@ Two paths, both behind ONE write-mode LiveGuard with cleanup=True (and allow_app
 * the gated delete TOOLS, called through an in-process fastmcp Client on
   build_server(live_settings(), event_hooks={"request": [guard, pacer]}): delete_ticket_comment,
   delete_time_entry (repeated while Outcome is "Reopened", at most 3 calls), delete_item, delete_uptime_check,
-  delete_project_task, delete_project_comment and delete_invoice;
+  delete_project_task, delete_project_comment and delete_invoice, and, for the records of the 1.5.0 areas, delete_asset_type,
+  delete_client_location, delete_client_domain and delete_product_charge (the contract and the alert are not deleted: see below);
 * raw soft deletes through a minimal httpx.AsyncClient
   (X-API-Key, the base URL of the settings: https://api.usw.gorelo.io/v1 unless GORELO_BASE_URL says otherwise) for the
   records that deliberately have no tool: tickets, contacts, the temporary client and projects (and, as the
@@ -34,7 +35,7 @@ it Approved, or the label search found it Approved) is voided by this cleanup ON
 the invoice it approved itself, before any cleanup runs, and the cleanup the matrix runs afterwards never does). Without
 the flag it is a leftover that needs the user, named by its DisplayNumber: Gorelo pushed it to the connected accounting
 system when it was approved, and its outcome says to check it there, gives this command with --void-approved and says
-to verify accounting status after this void (VOID_COMMAND_NOTE). With
+that the command voids in Gorelo only (VOID_COMMAND_NOTE: its copy in the accounting system is voided by hand too). With
 the flag it is voided like a Draft is deleted, with delete_invoice (expected status "Approved") or the same raw DELETE
 backstop, behind a guard that allows a DELETE of a run-created invoice recorded with status_id 5 and nothing else new,
 and the answer must say StatusId 4 (Void); anything else is a leftover. An Approved invoice that was NOT recorded as 5
@@ -48,8 +49,9 @@ was announced without an id (the answer was lost) is searched by the run label, 
 invoice whose Reference is exactly that label is a run-created record, so it is recorded in the manifest (with whatever
 status it has) and then handled by the rules above like any other invoice; nothing else is touched.
 
-Gorelo now says a void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void. That is why the leftover text above
-and the help of --void-approved require accounting verification (VOID_COMMAND_NOTE), and why the report ends,
+Whatever this cleanup voids it voids in Gorelo only: the copy that Gorelo had pushed to the accounting system was not
+voided there (seen with Xero), so it is the operator's to void there. That is why the leftover text above
+and the help of --void-approved say that the command voids in Gorelo only (VOID_COMMAND_NOTE), and why the report ends,
 just before its result line, with a reminder (VOID_REMINDER) for each invoice THIS cleanup voided. An invoice that was found
 void, or that the matrix or an earlier cleanup voided, is a known residue and gets no reminder from this one.
 
@@ -75,6 +77,27 @@ then records the same outcome: a document is a KNOWN RESIDUE from the moment it 
 app. A document Gorelo no longer finds (HTTP 404) is cleaned. A document that is already archived is only recorded. A file uploaded
 to a document (an attachment with details document_id) is known undeletable once its document is archived, like a file of a
 deleted ticket. It never restores, moves or shares anything.
+
+The records of the 1.5.0 areas (contract 6c30770dffc0), each recorded in the manifest before and after its create:
+
+    asset_type, client_location, client_domain, product_charge   deleted with their gated tool (delete_asset_type, delete_client_location and
+                   delete_client_domain with the client_id of the record's details, delete_product_charge), confirm=true, behind the cleanup
+                   guard (a run-created record only; a location or domain only on the test client). A 404 is "already gone". Gorelo marks a
+                   deleted location inactive instead of removing it, which counts as deleted
+    contract       a contract cannot be deleted through the API and the guard refuses the DELETE, so it is a KNOWN RESIDUE from the moment it
+                   exists, like a document. The area archives it (StatusId 3) and records the outcome (CONTRACT_RESIDUE_TAIL). For a contract a
+                   STOPPED run left active the cleanup reads it (get_contract), archives it with update_contract status=archived (the cleanup
+                   guard allows exactly the body {"StatusId": 3}), checks Status.Id 3 in the answer and records the same outcome; it is
+                   reported apart as known undeletable (neither cleaned nor a leftover, never alone a failure). A 404 is "already gone".
+                   While update_contract is held back (tools._common.HELD_TOOLS, since 1.5.1) the cleanup does not call it: an Active
+                   contract is a LEFTOVER that says to archive it in the Gorelo app (get_contract still reads it first)
+    alert          not a create: an EXISTING alert of the test client that the alert_status area dismissed (the record is written BEFORE the
+                   first change). The cleanup reads it (get_alert); New needs nothing, a Dismissed one is restored with set_alert_status
+                   (the cleanup guard allows StatusId 1 for a recorded alert only) and the answer must list it in UpdatedIds; a Ticketed or
+                   unreadable one is a LEFTOVER that says to check it in the Gorelo app. Gorelo moves the whole stack of an alert with it
+    invoice        the Drafts of the invoice_update area and the Draft that approve_invoice approves are ordinary invoice records: a Draft is
+                   deleted, an invoice recorded as Approved (5) is voided only with --void-approved; a temporary catalog item of the tax probe is
+                   an item record (delete_item)
 
 A custom property (kind custom_property, made by write_matrix --with-custom-properties) is the one thing a cleanup writes to
 the test client itself: the custom field value that the run set and may not have cleared yet. It is a record only so that this
@@ -125,6 +148,7 @@ import re
 import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -137,6 +161,7 @@ from scripts.live import guard as live_guard
 from scripts.site_config import SITE, SiteConfigError, site
 from server import build_server
 from settings import Settings
+from tools._common import REGISTRY
 
 MAX_REOPEN_ATTEMPTS = 3
 PACE_SECONDS = 1.0
@@ -181,6 +206,41 @@ def document_residue(how: str) -> str:
     """The outcome of an archived document: `how` ("archived by the write matrix (archive_document)"), then that it stays in Gorelo.
     It ends with DOCUMENT_RESIDUE_TAIL, which is_known_undeletable reads."""
     return f"{how}, stays in Gorelo {DOCUMENT_RESIDUE_TAIL}"
+# A contract cannot be deleted through the API (and this harness never sends the DELETE, which the guard refuses): the run archives it
+# (StatusId 3) and it stays in Gorelo, a known residue from the moment it exists. Every outcome of one ends like this.
+CONTRACT_RESIDUE_TAIL = "until removed in the Gorelo app (a contract cannot be deleted through the API)"
+CONTRACT_ARCHIVED = 3  # Contract StatusId 3 Archived (1 Active, 2 Expired)
+ALERT_NEW, ALERT_DISMISSED = 1, 2  # Alert StatusId (3 Ticketed is final)
+
+
+def run_started(run_id: Any) -> datetime | None:
+    """The UTC start of a run from its id (MCPTEST-YYYYMMDDHHMMSS), or None when the id is not of that shape."""
+    found = re.fullmatch(r"MCPTEST-(\d{14})", run_id) if isinstance(run_id, str) else None
+    if found is None:
+        return None
+    try:
+        return datetime.strptime(found.group(1), "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def parse_moment(value: Any) -> datetime | None:
+    """A Gorelo timestamp with a UTC offset (a trailing Z or +hh:mm) as an aware datetime; None for anything else (no guessing)."""
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else None
+
+
+def contract_residue(how: str) -> str:
+    """The outcome of an archived contract: `how` ("archived by the write matrix (update_contract)"), then that it stays in Gorelo.
+    It ends with CONTRACT_RESIDUE_TAIL, which is_known_undeletable reads."""
+    return f"{how}, stays in Gorelo {CONTRACT_RESIDUE_TAIL}"
+
+
 CUSTOM_PROPERTY_CLEARED = "cleared by the cleanup (update_client clear_custom_property_ids)"
 # The sentence of the leftover that a cleanup leaves, sending nothing, while another custom field of the test client is set: a
 # clear that Gorelo applied as a replace would wipe that value. The matrix summary tells this leftover from the others by it.
@@ -193,6 +253,8 @@ CHANGED_FIELDS = "changed_fields"
 # the text of a tool error). tests/test_live_custom_properties.py drives the real tool, so a rewording is caught there.
 COLLATERAL_ALARM = "custom fields that were not in this call"
 SHOWN_IDS = 8  # custom field ids named in an outcome; the details keep all of them
+# The records of the 1.5.0 areas that a gated delete tool removes (Gorelo marks a deleted location inactive, which is as gone as it gets).
+RECORD_DELETE_TOOLS = ("asset_type", "client_location", "client_domain", "product_charge")
 _PARENT_KEYS = (("ticket_id", "ticket"), ("task_id", "task"), ("project_id", "project"), ("document_id", "document"))
 _RAW_PATHS = {"ticket": "/tickets/{}", "contact": "/contacts/{}", "client": "/clients/{}", "project": "/projects/{}"}
 # Not in _RAW_PATHS: an invoice is read first. A Draft is deleted; an Approved invoice recorded as 5 is voided (the raw
@@ -203,14 +265,18 @@ INVOICE_PAID, INVOICE_VOID, INVOICE_APPROVED = 3, 4, 5  # Paid; Void (the answer
 # Every outcome of a voided invoice ends like this. A voided invoice cannot be removed (it stays listed as Void): it is a
 # known residue, like an uploaded file, and write_matrix.py builds its own outcome from this suffix.
 VOID_RESIDUE = "(still listed as Void)"
-# The published October 23 accounting effect conflicts with an older Xero observation. Verify before manual action.
+# Gorelo's void does not reach the accounting system: the invoice that the approved run had pushed stayed
+# open in the accounting system (seen with Xero) after the void in Gorelo, so whoever voids an Approved invoice says, right after,
+# that its copy there is the operator's to void. The write matrix says VOID_REMINDER after its own void (a note and a line
+# of its summary) and CleanupReport.render says it for each invoice this cleanup voided; write_matrix.py imports it.
 VOID_REMINDER = (
-    "Gorelo now says the void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void"
+    "the void is in Gorelo only: check the accounting system and void the invoice there too "
+    "(Gorelo's void is not pushed to the connected accounting system, seen with Xero)"
 )
 # Said wherever the user is sent to `cleanup --void-approved` (the help of the flag, the leftover text of an Approved
-# invoice and the hints of the write matrix that print the command): verify accounting after that command too. The write
+# invoice and the hints of the write matrix that print the command): that command voids in Gorelo only too. The write
 # matrix imports it as well.
-VOID_COMMAND_NOTE = "verify accounting status after this void before any manual void"
+VOID_COMMAND_NOTE = "this voids it in Gorelo only: void its copy in the accounting system by hand too"
 NO_SUCH_NUMBER = "no invoice has the number"  # what delete_invoice says, before any DELETE, when its lookup finds nothing
 INVOICE_SEARCH_PAGES = 3  # pages of list_invoices read when an announced create is searched by its label
 INVOICE_SEARCH_PAGE_SIZE = 50
@@ -235,8 +301,8 @@ class _Outcome:
 
 def is_known_undeletable(record: Record) -> bool:
     """Is this record a known residue that nobody can remove: an uploaded file that the cleanup found its parent deleted
-    (or, for a document, archived) for (see _note_undeletable), a custom asset, a document (archived, see _clean_document), or an
-    invoice that was voided and stays listed as Void (see _note_void)?"""
+    (or, for a document, archived) for (see _note_undeletable), a custom asset, a document (archived, see _clean_document), a contract
+    (archived, see _clean_contract), or an invoice that was voided and stays listed as Void (see _note_void)?"""
     outcome = record.outcome or ""
     if record.kind in UNDELETABLE_KINDS:
         return outcome.endswith(UNDELETABLE_REASON)
@@ -244,6 +310,8 @@ def is_known_undeletable(record: Record) -> bool:
         return outcome.endswith(CUSTOM_ASSET_RESIDUE_TAIL)
     if record.kind == "document":
         return outcome.endswith(DOCUMENT_RESIDUE_TAIL)
+    if record.kind == "contract":
+        return outcome.endswith(CONTRACT_RESIDUE_TAIL)
     return record.kind == "invoice" and outcome.endswith(VOID_RESIDUE)
 
 
@@ -258,7 +326,7 @@ class CleanupReport:
     from the manifest by run_cleanup, which keeps them out of `leftovers`; the matrix prints them on a line of their own.
 
     `voided` names the invoices THIS cleanup voided (DisplayNumber, else Number, else Id, in the order it voided them): the
-    report says for each, as its last line before the result, that the accounting status must be verified after the void (VOID_REMINDER). An invoice
+    report says for each, as its last line before the result, that the void is in Gorelo only (VOID_REMINDER). An invoice
     that was found void, or that the matrix or an earlier cleanup voided, is in `undeletable` but not in `voided`."""
 
     run_id: str
@@ -426,13 +494,19 @@ class _Cleaner:
         if kind == "document":
             await self._clean_document(record)
             return
+        if kind == "contract":
+            await self._clean_contract(record)
+            return
+        if kind == "alert":
+            await self._clean_alert(record)
+            return
         if kind in _RAW_PATHS:
             outcome = await self._raw("DELETE", _RAW_PATHS[kind].format(ident))
         elif kind == "time_entry":
             outcome = await self._delete_time_entry(ident)
         elif kind == "comment" and record.details.get("private") is False:
             return  # a non-private comment cannot be deleted; it goes with its ticket
-        elif kind in ("comment", "project_comment", "task", "item", "uptime"):
+        elif kind in ("comment", "project_comment", "task", "item", "uptime", *RECORD_DELETE_TOOLS):
             outcome = await self._delete_with_tool(record)
         else:
             return  # section, side_conversation, approval: covered by the parent; attachment: see _note_undeletable
@@ -482,6 +556,131 @@ class _Cleaner:
             )
             return
         self._note_document(ident, "archived by the cleanup (archive_document)")
+
+    # -- contracts ---------------------------------------------------------------
+
+    def _note_contract(self, ident: Any, how: str) -> None:
+        """The contract is archived and stays in Gorelo: a known residue, not cleaned (a contract cannot be deleted through the API)."""
+        self.manifest.cleanup_failed("contract", ident, contract_residue(how))
+
+    async def _clean_contract(self, record: Record) -> None:
+        """Archive a contract a stopped run left Active (update_contract status archived; the cleanup guard allows exactly the body
+        {"StatusId": 3} for a run-created contract), and record it as a known residue. Nothing is sent for a record that already carries
+        the residue outcome. The contract is read first (get_contract): a 404 means it is gone; Status.Id 3 is only recorded; anything
+        else is archived, and the tool's answer has to show Status 3, else the contract is a leftover that says what was seen."""
+        ident = record.id
+        if is_known_undeletable(record):
+            return
+        read = await self._tool("get_contract", {"contract_id": ident})
+        if read.gone:
+            self.manifest.cleaned("contract", ident, "already gone (HTTP 404)")
+            return
+        status = read.data.get("Status") if read.ok and isinstance(read.data, dict) else None
+        raw_id = status.get("Id") if isinstance(status, dict) else None
+        if isinstance(raw_id, bool) or not isinstance(raw_id, int):
+            why = read.text if not read.ok else "the record has no readable Status"
+            self.manifest.cleanup_failed(
+                "contract",
+                ident,
+                self._safe(f"left over: contract {ident} could not be read first ({why}), so it was not archived; it may still be Active"),
+            )
+            return
+        if raw_id == CONTRACT_ARCHIVED:
+            self._note_contract(ident, "already archived")
+            return
+        if REGISTRY.is_held("update_contract"):  # held back (1.5.1): the server has no such tool, so the contract is left for the Gorelo app
+            self.manifest.cleanup_failed(
+                "contract",
+                ident,
+                self._safe(f"left over: contract {ident} is not archived, update_contract is held back until Gorelo releases contract writes; archive it in the Gorelo app"),
+            )
+            return
+        archived = await self._tool("update_contract", {"contract_id": ident, "status": "archived", "confirm": True})
+        answered = archived.data.get("Status") if archived.ok and isinstance(archived.data, dict) else None
+        answered_id = answered.get("Id") if isinstance(answered, dict) else None
+        if not archived.ok or answered_id != CONTRACT_ARCHIVED or isinstance(answered_id, bool):
+            why = archived.text if not archived.ok else "the answer does not show Status 3"
+            self.manifest.cleanup_failed(
+                "contract",
+                ident,
+                self._safe(f"left over: contract {ident} is still not archived, update_contract did not confirm: {why}; archive it in the Gorelo app"),
+            )
+            return
+        self._note_contract(ident, "archived by the cleanup (update_contract)")
+
+    # -- alerts ------------------------------------------------------------------
+
+    async def _clean_alert(self, record: Record) -> None:
+        """Put an alert of the alert_status area back to New. The record exists so that this cleanup knows what to undo (the alert is an
+        EXISTING one of the test client, not a create). The alert is read first (get_alert): a 404 means it is gone; New needs nothing;
+        Dismissed is restored with set_alert_status (the cleanup guard allows StatusId 1 for a recorded alert and nothing else) and the
+        answer has to list the alert in UpdatedIds; Ticketed is final and a leftover for the user. Gorelo changes the whole stack of an
+        alert with it, so two limits keep the cleanup from reopening an alert the run did not dismiss: the alert is restored only when its
+        DismissedOn is not before the run's start (the run id is a UTC timestamp; a Dismissed alert with an older or unreadable DismissedOn was
+        dismissed by somebody else and is a leftover that says so), and the restore may move only the ids the run recorded (details
+        dismissed_ids; the alert itself when none were recorded): any other id in UpdatedIds is a leftover that names it."""
+        ident = record.id
+        read = await self._tool("get_alert", {"alert_id": ident})
+        if read.gone:
+            self.manifest.cleaned("alert", ident, "already gone (HTTP 404)")
+            return
+        status = read.data.get("Status") if read.ok and isinstance(read.data, dict) else None
+        raw_id = status.get("Id") if isinstance(status, dict) else status
+        if isinstance(raw_id, bool) or not isinstance(raw_id, int):
+            why = read.text if not read.ok else "the record has no readable Status"
+            self.manifest.cleanup_failed(
+                "alert",
+                ident,
+                self._safe(f"left over: alert {ident} could not be read first ({why}); restore it to New in the Gorelo app if it is Dismissed"),
+            )
+            return
+        if raw_id == ALERT_NEW:
+            self.manifest.cleaned("alert", ident, "already New, nothing to restore")
+            return
+        if raw_id != ALERT_DISMISSED:
+            self.manifest.cleanup_failed(
+                "alert",
+                ident,
+                f"left over: alert {ident} reads status {raw_id}, not Dismissed (2): the cleanup restores only a Dismissed alert; check it in the Gorelo app",
+            )
+            return
+        started = run_started(self.manifest.run_id)
+        dismissed_on = read.data.get("DismissedOn") if isinstance(read.data, dict) else None
+        moment = parse_moment(dismissed_on)
+        if started is None or moment is None or moment < started:
+            self.manifest.cleanup_failed(
+                "alert",
+                ident,
+                self._safe(
+                    f"left over: alert {ident} is Dismissed but its DismissedOn is not inside this run's window (it is before the run started "
+                    "or unreadable), so somebody else dismissed it and the cleanup did not restore it; check it in the Gorelo app"
+                ),
+            )
+            return
+        restored = await self._tool("set_alert_status", {"alert_ids": [ident], "status": "new"})
+        updated = restored.data.get("UpdatedIds") if restored.ok and isinstance(restored.data, dict) else None
+        if not restored.ok or not isinstance(updated, list) or ident.lower() not in {str(item).lower() for item in updated}:
+            why = restored.text if not restored.ok else "the answer does not list the alert in UpdatedIds"
+            self.manifest.cleanup_failed(
+                "alert",
+                ident,
+                self._safe(f"left over: alert {ident} may still be Dismissed, set_alert_status did not confirm: {why}; restore it to New in the Gorelo app"),
+            )
+            return
+        recorded = record.details.get("dismissed_ids")
+        allowed = {str(item).lower() for item in recorded} if isinstance(recorded, list) and recorded else {str(ident).lower()}
+        extra = [str(item) for item in updated if str(item).lower() not in allowed]
+        if extra:
+            self.manifest.cleanup_failed(
+                "alert",
+                ident,
+                self._safe(
+                    f"left over: restoring alert {ident} also moved {len(extra)} alert(s) back to New that the run did not record as dismissed "
+                    f"({', '.join(extra)}); dismiss them again in the Gorelo app if they should stay dismissed"
+                ),
+            )
+            return
+        self.manifest.cleaned("alert", ident, f"restored to New by the cleanup (set_alert_status; {len(updated)} alert(s) of its stack changed)")
 
     # -- custom properties -------------------------------------------------------
 
@@ -694,7 +893,7 @@ class _Cleaner:
             answered = outcome.data.get("StatusId") if isinstance(outcome.data, dict) else None
             if isinstance(answered, int) and not isinstance(answered, bool) and answered == INVOICE_VOID:
                 self._note_void(ident, f"voided by the cleanup with {how} {VOID_RESIDUE}")
-                self.voided.append(name)  # the report requests accounting verification
+                self.voided.append(name)  # in Gorelo only: the report says the accounting system keeps its copy open
             else:  # a 6 would mean Gorelo called it a Draft by then: it is not what was asked, so it needs the user
                 self.manifest.cleanup_failed(
                     "invoice",
@@ -817,6 +1016,19 @@ class _Cleaner:
             return await self._tool("delete_item", {"item_id": record.id, "confirm": True})
         if kind == "uptime":
             return await self._tool("delete_uptime_check", {"check_id": record.id, "confirm": True})
+        if kind == "asset_type":
+            return await self._tool("delete_asset_type", {"asset_type_id": record.id, "confirm": True})
+        if kind == "product_charge":
+            return await self._tool("delete_product_charge", {"product_charge_id": record.id, "confirm": True})
+        if kind in ("client_location", "client_domain"):
+            client = details.get("client_id")
+            if not isinstance(client, int) or isinstance(client, bool) or client < 1:
+                return _Outcome(False, f"the manifest details of this {kind} have no client_id, so it cannot be deleted")
+            if kind == "client_location":
+                return await self._tool(
+                    "delete_client_location", {"client_id": client, "location_id": record.id, "confirm": True}
+                )
+            return await self._tool("delete_client_domain", {"client_id": client, "domain_id": record.id, "confirm": True})
         needed = {"comment": "ticket_id", "project_comment": "project_id", "task": "project_id"}[kind]
         parent = details.get(needed)
         if not isinstance(parent, str) or not parent:
@@ -1062,8 +1274,8 @@ async def run_cleanup(
     leftovers:  also delete the leftovers listed in site.local.toml [leftovers], after checking their names.
     void_approved: also void an Approved invoice that the run recorded with status_id 5 (it is read first and must still
                 read as Approved). Without it such an invoice is a leftover for the user; the write matrix never sets it.
-                Verify accounting status: the report names every invoice this call voided (`voided`) and says so for each
-                (VOID_REMINDER). The current contract says the void is sent to accounting, unlike an older Xero probe.
+                The void is in Gorelo only: the report names every invoice this call voided (`voided`) and says so for each
+                (VOID_REMINDER), because its copy in the accounting system stays open until the user voids it there.
     settings:   default live_settings() (reads the API key from the app .env); tests pass their own. Its API host must be the
                 manifest's api_host, else SiteConfigError before any request.
     transport:  an httpx transport for BOTH clients (tests pass httpx.MockTransport); default is the network.

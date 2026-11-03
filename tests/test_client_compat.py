@@ -469,7 +469,7 @@ async def test_a_wrong_password_on_the_consent_page_issues_no_code_and_a_client_
 
 async def test_chatgpt_copilot_studio_and_claude_sign_in_on_one_server_with_both_domains_set(open_rig):
     async with open_rig("chatgpt.com, global.consent.azure-apim.net") as rig:
-        assert set(rig.provider.allowed_redirect_domains) == {"claude.ai", "claude.com", "localhost", "chatgpt.com", "openai.com", POWER_PLATFORM}
+        assert set(rig.provider.allowed_redirect_domains) == {"claude.ai", "claude.com", "localhost", "chatgpt.com", POWER_PLATFORM}
         found = await discover(rig.http)
         sessions = [await sign_in(rig.http, found, profile) for profile in (CHATGPT, CHATGPT_PLATFORM, COPILOT, CLAUDE)]
         assert len({s.client_id for s in sessions}) == 4 and len({s.access_token for s in sessions}) == 4
@@ -538,9 +538,6 @@ async def test_without_the_extra_domain_the_registration_is_refused_and_the_jour
     capture(caplog)
     async with open_rig(extra) as rig:
         reply = await post_registration(rig, redirect)
-        if host == "chatgpt.com":
-            assert reply.status_code == 201  # AulTECH built-in callback support
-            return
         assert reply.status_code == 400 and reply.json() == REFUSED_BODY
         assert rig.provider.clients == {} and not (rig.state_dir / STATE_FILE).exists()  # nothing stored, nothing saved
     assert f"register outcome=refused reason=redirect_not_allowed redirect={host} ip={OPERATOR_IP}" in journal(caplog)
@@ -552,7 +549,7 @@ async def test_a_domain_for_one_client_does_not_admit_the_other(open_rig):
         assert (await post_registration(rig, COPILOT_REDIRECT)).status_code == 400
         assert (await post_registration(rig, CHATGPT_CALLBACK)).status_code == 201
     async with open_rig(POWER_PLATFORM) as rig:
-        assert (await post_registration(rig, CHATGPT_CALLBACK)).status_code == 201
+        assert (await post_registration(rig, CHATGPT_CALLBACK)).status_code == 400
         assert (await post_registration(rig, COPILOT_REDIRECT)).status_code == 201
 
 
@@ -608,11 +605,11 @@ async def test_a_real_subdomain_of_an_entry_is_admitted_as_documented(open_rig, 
 async def test_removing_the_domain_later_refuses_new_sign_ins_of_a_client_that_registered_while_it_was_set(open_rig, tmp_path, caplog):
     capture(caplog)
     state_dir = tmp_path / "shared-state"
-    async with open_rig(POWER_PLATFORM, state_dir=state_dir) as rig:
+    async with open_rig("chatgpt.com", state_dir=state_dir) as rig:
         found = await discover(rig.http)
-        client = await register(rig.http, found, COPILOT)
+        client = await register(rig.http, found, CHATGPT)
     query = {
-        "response_type": "code", "client_id": client["client_id"], "redirect_uri": COPILOT_REDIRECT,
+        "response_type": "code", "client_id": client["client_id"], "redirect_uri": CHATGPT_CALLBACK,
         "code_challenge": pkce()[1], "code_challenge_method": "S256", "state": "s", "resource": MCP_URL,
     }
     async with open_rig(None, state_dir=state_dir) as rig:  # the operator took MCP_EXTRA_REDIRECT_DOMAINS out and restarted
@@ -622,7 +619,7 @@ async def test_removing_the_domain_later_refuses_new_sign_ins_of_a_client_that_r
         posted = await rig.http.post("/authorize", data={**query, "password": PASSWORD, "decision": "approve"})
         assert posted.status_code == 400 and posted.text == oauth_guard.INVALID_REQUEST_PAGE and "location" not in posted.headers
         assert rig.provider.auth_codes == {}
-    blocked = f"authorize outcome=blocked_redirect reason=not_allowed client={client['client_id'][:8]} redirect={POWER_PLATFORM} ip={OPERATOR_IP}"
+    blocked = f"authorize outcome=blocked_redirect reason=not_allowed client={client['client_id'][:8]} redirect=chatgpt.com ip={OPERATOR_IP}"
     assert journal(caplog).count(blocked) == 2
     assert all(r.levelno == logging.WARNING for r in caplog.records if "blocked_redirect" in r.getMessage())
 

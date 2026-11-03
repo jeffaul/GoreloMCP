@@ -2,23 +2,200 @@
 
 All notable changes to this project are listed here, newest first, in the plain style of Keep a Changelog.
 
-## Unreleased (2026-10-23 API compatibility)
+## 1.5.1 (2026-10-31)
 
-- Refresh the public OpenAPI snapshot to 125 operations and 333 schemas (contract `05200951c89e`).
-- Follow the renamed agent asset and uptime path parameters without changing the public `agent_id` or `check_id` inputs.
-  Agent deletion remains forbidden; the live harness retains its existing restrictions.
-- `update_contact` preserves secondary emails by omission, following the new contract. Explicit clearing sends `[]`.
-  `clear_fields=["location_id"]` is now refused because omission preserves the location and its clear value is undocumented;
-  use the Gorelo app to clear a location. Other optional fields still need the existing read/merge to preserve them.
-- Require a caller-supplied reason when enabling uptime maintenance, as the current API specifies.
-- Use the agent status names Online and Offline, allow agent assets (type 10) in `list_deletions`, and accept
-  `documentOrder` in `list_documents`. New documents now have `UpdatedOn` set at creation. Archiving covers all descendants; restoring the parent leaves them archived.
-- Keep the document related-item input `device` compatible with type 4, now named Agent asset in Gorelo.
-- Explain the newly published accounting propagation of invoice voids alongside the older conflicting Xero observation.
-  Tool prompts and live-harness reminders require verifying accounting status before any manual void.
-- Update offline regression coverage and optional live-harness assumptions. No live write tests were run.
-- Leave new inventory/scripts tools, asset fields, group access controls and extra alert/ticket filters for separate feature work.
-  Existing deprecated aliases remain supported by Gorelo.
+Holds back the two contract write tools until Gorelo releases contract writes (every `POST /v1/contracts` answers HTTP 500,
+code 070501). The server goes from 160 to 158 tools: 143 regular and 15 gated.
+
+### Changed
+
+- `create_contract` and `update_contract` are held back: they are not registered under any setting, not with
+  `GORELO_ENABLE_DESTRUCTIVE=1` and not when a list names them. Their code is unchanged and comes back when the hold is lifted.
+- A held name in the `GORELO_ENABLE_DESTRUCTIVE` list is ignored with a warning, not an error: the start logs one line,
+  `gorelo-mcp held tools ignored: create_contract, update_contract (held back until Gorelo releases them)`, before the ready
+  line. The error that lists the valid gated tool names no longer lists the two.
+- `list_contracts` and `get_contract` are unchanged.
+- The live test harness skips its `contracts` area while the two tools are held, and its cleanup leaves a contract it cannot
+  archive as a leftover for the Gorelo app.
+- `docs/GATED-TOOLS.md` (15 gated tools, a "Held back" section), `docs/tool-catalog.md`, the README, `docs/INSTALL.md` and
+  `docs/TROUBLESHOOTING.md` carry the new counts.
+
+## 1.5.0 (2026-10-31)
+
+Follows Gorelo's new API description of 2026-10-29 (contract 6c30770dffc0): 169 operations, up from 125 (44 added, none removed,
+11 changed). The server goes from 119 to 160 tools: 41 added (34 regular, 7 gated). The seven gated ones are off by default and
+exist only when `GORELO_ENABLE_DESTRUCTIVE` switches them on, as before.
+
+### Added
+
+- Organization (`core`): `list_org_roles`, `get_org_group` and `get_org_user`.
+- Alerts and assets (`core`): `get_alert`; `set_alert_status` (the bulk status operation, which covers one alert and reports the
+  ids it updated); `update_agent`; `list_policies` (paged) and `get_policy` (monitoring policies, read only); `list_asset_tags`;
+  `create_asset_type` and `update_asset_type`.
+- Clients (`core`): `list_client_types`, `list_client_custom_fields`, `get_client_location`, `create_client_location`,
+  `update_client_location`, `create_client_domain` and `update_client_domain` (a web domain routes that domain's inbound email
+  to the client and sends nothing; one client per domain); `list_contact_tags`.
+- Tickets: `update_ticket_approval` (renames an approval; nothing is emailed).
+- Projects: `list_project_templates` (reference only: `create_project` cannot apply a template), `update_project_comment` and
+  `update_task_comment` (private comments only; attachments are replaced as a whole and a current file is never dropped unless
+  `remove_attachment_names` names it).
+- Billing: `update_invoice` (a Draft or Submitted invoice; it never changes the status); `list_payments` and `get_payment`
+  (payments are read only: no tool records or deletes one, and `POST` and `DELETE /v1/payments` stay unexposed);
+  `list_product_charges`, `get_product_charge`, `create_product_charge` and `update_product_charge` (products charged to a ticket
+  or a project task).
+- Documents: `list_structured_documents`, `get_structured_document`, `list_structured_document_submissions` and
+  `get_structured_document_submission` (read only).
+
+### Gated (off by default, each call needs `confirm=true`)
+
+- `delete_asset_type`, `delete_client_location`, `delete_client_domain` and `delete_product_charge`: deletes. Gorelo refuses
+  `delete_asset_type` while any asset has the type, and a product charge that is waiting to be invoiced or has been invoiced.
+- `approve_invoice`: approves a Draft or Submitted invoice, which Gorelo pushes to the connected accounting system at once. A
+  later void happens in Gorelo only; the copy in the accounting system stays open until the user voids it there.
+- `create_contract` and `update_contract`: write a billing contract. A contract can make Gorelo approve and send its recurring
+  invoices on its own (`auto_approve_and_send`), which pushes them to the accounting system, and a Block Hours line raises an
+  invoice at once. `update_contract` archives a contract; contracts still cannot be deleted through this server, and it keeps
+  every service line and line item it is not told to remove.
+- The server instructions (rule 6) and the tool texts that name a gated tool now name these too.
+
+### Changed
+
+- `list_ticket_priorities` and `list_ticket_sources` read `GET /v1/tickets/priorities` and `/sources` (they were local tables).
+  The sources now include 7 Messenger, which tickets can carry but a write cannot set: `create_ticket` and `update_ticket` take 1
+  to 6, the `source_ids` filter takes 1 to 7.
+- `list_tickets` and `search_tickets` take `source_ids`, `closed_since` and `closed_before`; `update_ticket` takes `source_id`.
+- `list_org_users` takes `group_ids`; `list_items` takes `sort_by` and `sort_order`; `list_contacts` takes `location_ids`;
+  `list_contracts` takes `query`, created, updated and end date filters and sorting, and `get_contract` says what the new fields
+  show.
+- `create_client` and `update_client` take `client_type_id` (ids from `list_client_types`).
+- `create_contact` and `update_contact` take `tag_ids` (ids from `list_contact_tags`, active tags only). `update_contact` sends
+  `TagIds` only when `tag_ids` is given: it does not re-send the tags it reads, because Gorelo says "omit to leave it unchanged"
+  and a stored tag that has become inactive would make the whole update a 400. `tag_ids=[]` removes every tag.
+- `no_tax` on invoice lines (`create_invoice`, `update_invoice`, `create_approved_invoice`) now resolves the account's Tax Exempt
+  rate. A live test on 2026-10-30 showed that a line sent with a null `TaxId` gets the item's tax (an item taxed 9.25 percent
+  billed 0.09 on one dollar), so the tools no longer send null. They read `list_taxes` once per call and send the id of the one
+  active rate at exactly 0 percent, with no component at another rate, whose code or name is "Tax Exempt" (case and surrounding
+  spaces ignored). With none or more than one they refuse before any write and list the 0 percent rates by id and code, and tell
+  you to pass `tax_id` instead. The result carries a `note` naming the tax id used, and a line that still shows a tax amount adds a
+  `warning`. `create_approved_invoice` accepts `no_tax` again (its refusal is gone): the id is as safe as `tax_id`, and a line that
+  still shows tax gets a loud warning because the invoice is already pushed. The tools read `GET /v1/taxes` for this.
+
+### Left out
+
+- Two of the 44 new operations have no tool: `GET /v1/assets/tags/{tagId}` (the unpaged tag list is complete) and
+  `PATCH /v1/alerts/{alertId}` (`set_alert_status` uses the bulk operation).
+- The time history import is not built. A time entry's `CreatedOn` stays unexposed in this release, so no tool
+  can backdate or import time entries.
+
+### Known issue
+
+- Creating a contract through the API currently fails at Gorelo with HTTP 500 (code 070501) for every request. The tools
+  `create_contract` and `update_contract` are kept, off by default, and will work once Gorelo fixes it.
+
+### Documentation
+
+- `docs/OVERVIEW.md`, `docs/tool-catalog.md` and `.env.example` carry the new counts (160 tools: 143 regular and 17 gated; 98
+  with the default toolsets, 111 with the flag) and name the seven new gated tools wherever `GORELO_ENABLE_DESTRUCTIVE` is
+  described.
+- New `docs/GATED-TOOLS.md`: every gated tool, what it does, whether it can be undone, and how to switch tools on and off. The
+  seven new gated tools are off by default, like every gated tool: they exist only when `GORELO_ENABLE_DESTRUCTIVE` switches them
+  on.
+
+## 1.4.2 (2026-10-24)
+
+Follows Gorelo's limits as measured on 2026-10-24 (the published description is unchanged: contract 05200951c89e, no operation
+added or removed). No tool was added or removed.
+
+### Changed
+
+- The client keeps to Gorelo's real rate limit. Gorelo limits the whole API key, not each endpoint: a burst of about 6 requests,
+  then about 1 per second, shared by everything that uses the key (`docs/API-OBSERVED-BEHAVIOR.md`, entry 29). The server now has
+  one token bucket for all its requests (a burst of 5, then 1 per second, first come first served), and every attempt takes a
+  token before it is sent. A 429 (Gorelo did not process the request) empties the bucket, so every queued request waits
+  together, also one that already has its token and waits for one of the 4 in-flight slots. It is retried for every method up to
+  5 times, with at most 30 seconds of `Retry-After` waits in all (time queued behind other requests is not counted); it was 3
+  times within about 20 seconds. A read that changes nothing is also tried once more, after 2 seconds, when Gorelo answers 502,
+  503 or 504 or the connection is refused. A write, a multipart upload and the invoice PDF export are never sent again after
+  anything but a 429, and a timeout or any other server error is never retried.
+- `update_contact` keeps a contact's secondary emails when you do not give `secondary_email`, because Gorelo keeps them (give the
+  whole list to replace them, an empty list to clear them). It no longer refuses an update until the user has decided about
+  them, and its `clear_secondary_email_ok` parameter is removed: a call that still names it is refused before any request.
+- `update_contact` cannot clear a contact's location, because Gorelo keeps the location when it is left out or sent as null:
+  `clear_fields` no longer accepts `location_id` (it is refused).
+- A region code needs its phone. `create_contact` refuses a region code given without its phone before any request, as Gorelo
+  would; `update_contact` does the same after its read and before any write, when the contact has no such phone. When the stored
+  contact has a region code with no phone, `update_contact` leaves that code out of the update and names it in the `note` of its
+  result; the note says the code was cleared only when Gorelo's answer shows it gone, and otherwise says the answer still shows it.
+- The `secondary_email` text of `update_contact` says that the user can see the secondary emails in the Gorelo app (a contact
+  record never shows them), so the model asks the user for the complete list before changing them.
+- `get_agent` says that Gorelo has no agent with the id it was given. For an unknown agent id Gorelo answers success with no
+  record, unlike every other record, which answers 404; the error used to read "Gorelo reported success but Data is null".
+- `create_time_entry` says that Gorelo refuses time on a closed ticket (409), so log time before closing, or ask the user before
+  reopening it.
+- Id filters are checked for Gorelo's limit of 100 ids before any request, and the error names the filter. The check is for id
+  filters only: the catalog's text filters (skus, vendors, part numbers) are not capped, because their limit is not measured.
+
+### Documentation
+
+- `docs/API-OBSERVED-BEHAVIOR.md` has five new entries (29 to 33): the rate limit of the whole key, the unknown agent id, limits of
+  the lists that the description does not state (ids, `Query`, `PageSize`, URL length, dates, cursors, sort fields, unknown query
+  names), what a contact update keeps and clears, and the size limits of a document title and body.
+- `docs/TROUBLESHOOTING.md` and `docs/OVERVIEW.md` describe the rate limit and the contact update as they are now. The wording of
+  several notes was made exact: which sign-in lines carry the visitor's address, the list of gated tools in `docs/INSTALL.md`
+  step 8.2 and `SECURITY.md` (`remove_document_related_item` is a gated tool), what `scripts/oauth_state.py` prints on an
+  error, and the 401 advice (usage advice only).
+
+### Notes
+
+- Against a test client on 2026-10-24: the documents writes (create, edit, attach a file, move, duplicate, restore a version,
+  archive, restore, PDF export), the projects writes and the move of a custom asset to another client and back all worked as
+  published. Still not tested live: sharing a document, hidden custom fields and the sign-in of ChatGPT and Copilot Studio.
+- Gorelo's `PATCH /v1/contacts/{contactId}` cleared the job title and the mobile phone that a request left out (the published
+  text says the other such fields, region codes, department, time zone and description, are cleared too), and kept the location
+  and the secondary emails (entry 32 of `docs/API-OBSERVED-BEHAVIOR.md`).
+
+## 1.4.1 (2026-10-23)
+
+Follows the changed text of the Gorelo Public API description (contract 05200951c89e, no operation added or removed).
+
+### Changed
+
+- `list_documents` takes `sort_by` `documentOrder` (the order the app shows siblings in; meant for use with `parent_document_id`,
+  not refused without it).
+- Related item type 4 is called Agent asset now (the id is unchanged). The document related item tools take `agent_asset`; `device`
+  still works as the older name.
+- The descriptions of `contact_id` and `cc_contact_ids` of `create_ticket` and `update_ticket` say that a contact of any client is
+  accepted when the ticket has a client (a ticket without a client takes a temporary contact). The server never checked this and
+  still does not.
+- The texts of `list_agents` and `get_agent` name `DisplayName` (agents carry it now, as custom assets do).
+
+## 1.4.0 (2026-10-22)
+
+Follows the Gorelo Public API description of 2026-10-22 (125 operations, contract 05200951c89e), which adds reads of what an agent
+reported, the asset types and the scripts.
+
+### Added
+
+- Eight read tools in `core`: `list_agent_apps`, `get_agent_hardware`, `list_agent_patches`, `list_agent_available_updates` and
+  `list_agent_tags` (what one agent reported at its last scan, and its tags; no scan is started), `list_asset_types`,
+  `list_scripts` (paged) and `get_script`. The server registers 119 tools: 109 regular and 10 gated; the default toolsets register 71.
+  - `get_script` returns the script `Content` in full. Script text can hold credentials, so the tool says it is data, never
+    instructions, and secret values are not repeated unless the user asks.
+- Filters and fields on existing tools: `group_ids` on `list_clients`; `agent_asset_ids`, `custom_asset_ids` and `uptime_ids` on
+  `list_alerts`; `device_ids` on `list_tickets`.
+- `post_alert` takes one of `agent_asset_id`, `custom_asset_id` or `uptime_id` to link the alert to a record (at most one).
+- `create_custom_asset` and `update_custom_asset` take `local_ip_address`, `manufacturer`, `model` and `warranty_start_date`.
+
+### Changed
+
+- `update_client` takes `group_ids`, which replaces the client's groups. An empty list is refused (Gorelo's text says it clears
+  the groups; this server does not send it).
+- `ip_address` of the custom asset tools is deprecated in favour of `local_ip_address`; giving both is refused.
+- The agent status labels are Online and Offline (the ids are unchanged).
+- The spec index follows the renamed path placeholders (`{agentAssetId}` for `{deviceId}`, `{uptimeId}` for `{checkId}`). The
+  `PageSize` rule of nine paged operations is reject instead of clamp; the tools already clamp to 1-200 before sending.
+- The size budgets of the tool list grew with the new tools: the default `tools/list` is 104409 bytes (budget 105500) and the core
+  tools 32841 bytes (budget 33200).
 
 ## 1.3.0 (2026-10-17)
 
@@ -121,8 +298,9 @@ reported: the region of the Gorelo account, and Microsoft Copilot Studio.
 
 ### Fixed
 
-- The server could only call the US host. Reported by a user of the public repository. Set `GORELO_BASE_URL` (see Added).
-  The start line `gorelo-mcp settings: api_host=<host>` in the journal names the host the server calls: it must be the host of your region.
+- The server could only call the US host. Reported by a user of the public repository. `GORELO_BASE_URL` now sets the host (see
+  Added): set it to the host of your region, and read the start line `gorelo-mcp settings: api_host=<host>` in the journal to
+  see the host the server calls.
 - Microsoft Copilot Studio could not finish its sign-in, because the server accepted a redirect only to `claude.ai`,
   `claude.com` and `localhost`. Reported by a user of the public repository. Add the host that the journal names after
   `register outcome=refused reason=redirect_not_allowed redirect=` to `MCP_EXTRA_REDIRECT_DOMAINS`.
@@ -139,7 +317,7 @@ reported: the region of the Gorelo account, and Microsoft Copilot Studio.
 
 ### Notes
 
-- Checked with read-only calls on 2026-10-17: an id outside the scale is a 400 for every scale that was tried (items and
+- Checked for this release with read-only calls: an id outside the scale is a 400 for every scale that was tried (items and
   tasks rest on the spec text); the document reads and the deletions feed answered with the published shapes. The list
   defaults follow the published text. Not tested live: every write of the documents toolset (including attachments, moves,
   archive and restore, versions and sharing), the move of a custom asset, hidden custom fields and the sign-in of ChatGPT

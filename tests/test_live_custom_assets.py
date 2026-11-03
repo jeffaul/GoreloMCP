@@ -55,7 +55,7 @@ TOOLS_REGISTERED = {"list_custom_asset_hardware_types", "create_custom_asset", "
 }
 needs_tools = pytest.mark.skipif(not TOOLS_REGISTERED, reason="the custom asset tools are not registered yet")
 PASCAL = {
-    "name": "Name", "client_id": "ClientId", "move_to_client_id": "ClientId", "location_id": "LocationId", "hardware_type_id": "HardwareTypeId",
+    "name": "Name", "client_id": "ClientId", "location_id": "LocationId", "hardware_type_id": "HardwareTypeId",
     "description": "Description", "contact_id": "ContactId", "warranty_end_date": "WarrantyEndDate",
     "ip_address": "IpAddress", "serial_number": "SerialNumber",
 }
@@ -157,7 +157,7 @@ class AssetSession:
     def _update(self, name: str, arguments: dict) -> dict:
         ident = arguments.pop("custom_asset_id")
         clear = arguments.pop("clear_fields", None) or []
-        client = arguments.get("move_to_client_id")  # None: the tool was not told a client (nothing can move)
+        client = arguments.get("client_id")  # None: the tool was not told a client (nothing can move)
         body = {PASCAL[key]: value for key, value in arguments.items() if value is not None}
         body.update({PASCAL[key]: None for key in clear})
         moving = client is not None and client != self.asset["ClientId"]
@@ -166,7 +166,7 @@ class AssetSession:
             if moving and arguments.get("location_id") is None:
                 raise ToolFailed(
                     name,
-                    f"location_id: required when move_to_client_id moves the asset (it is at client {self.asset['ClientId']} now); give a "
+                    f"location_id: required when client_id moves the asset (it is at client {self.asset['ClientId']} now); give a "
                     f"location of client {client} (list_client_locations). Nothing was changed.",
                     sent=True,
                 )
@@ -240,9 +240,9 @@ async def test_the_happy_path_creates_reads_updates_clears_and_has_the_tool_refu
         "custom_asset_id": session.asset["Id"], "name": f"{RUN}-asset v2", "ip_address": "192.0.2.11", "description": f"{RUN}-asset: updated",
     }
     assert updates[1] == {  # the second names the asset's CURRENT client: the tool reads the asset first and sees no move
-        "custom_asset_id": session.asset["Id"], "move_to_client_id": TEST_CLIENT, "clear_fields": ["description", "ip_address", "warranty_end_date"],
+        "custom_asset_id": session.asset["Id"], "client_id": TEST_CLIENT, "clear_fields": ["description", "ip_address", "warranty_end_date"],
     }
-    assert updates[2] == {"custom_asset_id": session.asset["Id"], "move_to_client_id": SECOND, "name": f"{RUN}-asset v2"}  # no location_id
+    assert updates[2] == {"custom_asset_id": session.asset["Id"], "client_id": SECOND, "name": f"{RUN}-asset v2"}  # no location_id
     (post, create_body), (_, rename), (_, clear) = session.bodies  # the local refusal sent no write
     assert post == "POST /assets/custom" and create_body["Name"].startswith("MCPTEST-") and create_body["ClientId"] == TEST_CLIENT
     assert rename == {"Name": f"{RUN}-asset v2", "IpAddress": "192.0.2.11", "Description": f"{RUN}-asset: updated"}  # no ClientId
@@ -258,7 +258,7 @@ async def test_the_happy_path_creates_reads_updates_clears_and_has_the_tool_refu
     assert manifest.unresolved_intents() == [] and not matrix.guard.violations
     assert any("refused locally after its read of the asset" in note for note in matrix.notes)
     assert any(session.asset["Id"] in note and "stays on the test client" in note for note in matrix.notes)
-    assert "list_client_locations" not in [name for name, arguments in session.calls if arguments.get("move_to_client_id") == SECOND]
+    assert "list_client_locations" not in [name for name, arguments in session.calls if arguments.get("client_id") == SECOND]
 
 
 async def test_the_first_hardware_type_is_used_with_no_id_written_into_the_code(tmp_path):
@@ -407,7 +407,7 @@ class RefusalSession(AssetSession):
         self.mode = mode
 
     def _update(self, name: str, arguments: dict) -> dict:
-        if arguments.get("move_to_client_id") == SECOND and arguments.get("location_id") is None and arguments.get("clear_fields") is None:
+        if arguments.get("client_id") == SECOND and arguments.get("location_id") is None and arguments.get("clear_fields") is None:
             if self.mode == "local":
                 return super()._update(name, arguments)
             if self.mode == "no-read":  # refuses before any request
@@ -454,7 +454,6 @@ NOT_REFUSED = (
         ("no-read", f"{NOT_REFUSED} (0 request(s), no HTTP answer): location_id: required when client_id moves the asset"),
         ("other-text", f"{NOT_REFUSED} (1 request(s), no HTTP answer): name: not blank"),
         ("http", f"{NOT_REFUSED} (1 request(s), HTTP 500): Gorelo failed update_custom_asset (HTTP 500, code 1)"),
-        ("two-requests", f"{NOT_REFUSED} (2 request(s), no HTTP answer): location_id: required when client_id moves the asset"),
         (
             "accepts",
             "update_custom_asset with another client_id and no location_id was ACCEPTED (a PATCH reached Gorelo): the asset may "
@@ -469,6 +468,19 @@ async def test_a_move_without_a_location_that_the_tool_does_not_refuse_locally_a
     assert str(failed.value) == said
 
 
+async def test_a_refusal_after_a_read_that_the_client_sent_again_is_still_the_local_refusal(tmp_path):
+    # the client sends the read once more after a 429, a 502, 503 or 504 or a refused connection: two GETs and no write are the
+    # same local refusal, and the note says how many requests there were
+    matrix, session = refusal_matrix(tmp_path, "two-requests")
+    await write_matrix.area_custom_assets(matrix)
+    assert matrix.guard.writes_allowed == 3  # the same three writes as without the retry; the refused move wrote nothing
+    assert any(
+        "refused locally after its read of the asset, nothing was sent but GETs (2 requests: the read and the client's own retries "
+        "of it)" in note
+        for note in matrix.notes
+    )
+
+
 # the opt-in move to the second client and back (--with-asset-move)
 
 MOVE_CALLS = [
@@ -481,8 +493,8 @@ async def test_the_move_goes_to_the_second_client_and_back_and_is_announced_in_t
     await write_matrix.area_custom_assets(matrix)
     assert [name for name, _ in session.calls] == MOVE_CALLS
     out, back = [arguments for name, arguments in session.calls if name == "update_custom_asset"][-2:]
-    assert out == {"custom_asset_id": session.asset["Id"], "move_to_client_id": SECOND, "location_id": SECOND_LOCATION}
-    assert back == {"custom_asset_id": session.asset["Id"], "move_to_client_id": TEST_CLIENT, "location_id": LOCATION}  # where it was created
+    assert out == {"custom_asset_id": session.asset["Id"], "client_id": SECOND, "location_id": SECOND_LOCATION}
+    assert back == {"custom_asset_id": session.asset["Id"], "client_id": TEST_CLIENT, "location_id": LOCATION}  # where it was created
     move_out, move_back = session.bodies[-2:]
     assert move_out[1] == {"ClientId": SECOND, "LocationId": SECOND_LOCATION}
     assert move_back[1] == {"ClientId": TEST_CLIENT, "LocationId": LOCATION}
@@ -536,7 +548,7 @@ async def test_a_move_with_an_unknown_outcome_is_followed_by_the_way_back_and_en
     with pytest.raises(ToolFailed):
         await write_matrix.area_custom_assets(matrix)
     moves = [arguments for name, arguments in session.calls if name == "update_custom_asset"][3:]
-    assert [m["move_to_client_id"] for m in moves] == [SECOND, TEST_CLIENT]  # the way back was asked for whatever the way out did
+    assert [m["client_id"] for m in moves] == [SECOND, TEST_CLIENT]  # the way back was asked for whatever the way out did
     assert session.asset["ClientId"] == TEST_CLIENT
     assert manifest.all_created()[0].details == {"client_id": TEST_CLIENT}  # confirmed home by the way back
 
@@ -567,7 +579,7 @@ async def test_a_move_that_reads_back_wrongly_is_still_followed_by_the_way_back_
 
     async def wrong_location(name, arguments=None):
         row = await original(name, arguments)
-        if name == "update_custom_asset" and arguments.get("move_to_client_id") == SECOND and arguments.get("location_id"):
+        if name == "update_custom_asset" and arguments.get("client_id") == SECOND and arguments.get("location_id"):
             row = {**row, "LocationId": 1}
         return row
 
@@ -744,7 +756,7 @@ async def test_an_interrupted_move_leaves_a_record_that_says_the_asset_may_be_on
     original = session.call
 
     async def stopped_during_the_move(name, arguments=None):
-        if name == "update_custom_asset" and (arguments or {}).get("move_to_client_id") == SECOND and (arguments or {}).get("location_id"):
+        if name == "update_custom_asset" and (arguments or {}).get("client_id") == SECOND and (arguments or {}).get("location_id"):
             raise RuntimeError("the run was stopped while the move was unanswered")
         return await original(name, arguments)
 
@@ -808,7 +820,7 @@ def test_the_custom_asset_tools_are_named_apart_and_only_the_flag_opens_them():
     )
     assert write_matrix.tools_for(True, True, False, True) == write_matrix.MATRIX_TOOLS | write_matrix.CUSTOM_ASSET_TOOLS
     # the approved invoice run has its own set and the custom flag adds nothing to it
-    assert write_matrix.tools_for(False, False, True, True) == write_matrix.APPROVED_INVOICE_TOOLS
+    assert write_matrix.tools_for(False, False, True, True) == write_matrix.tools_for(False, False, True)
 
 
 def test_the_area_sits_after_items_and_before_the_custom_properties_and_documents_and_is_selected_by_name():
@@ -1010,8 +1022,9 @@ async def test_end_to_end_a_run_with_every_optional_area_but_the_approved_invoic
     report = await run(fake, with_items=True, with_invoices=True, with_custom_assets=True, with_asset_move=True, with_documents=True)
     assert report.ok, "\n".join(lines)
     # the approved invoice and the custom properties have flags of their own (the first one runs alone)
-    assert [r.status for r in report.results if r.area not in ("approved_invoice", "custom_properties")] == ["pass"] * (
-        len(report.results) - 2
+    new_areas = [area.key for area in write_matrix.OPT_INS]  # the 1.5.0 areas have flags of their own too
+    assert [r.status for r in report.results if r.area not in ("approved_invoice", "custom_properties", *new_areas)] == ["pass"] * (
+        len(report.results) - 2 - len(new_areas)
     )
     assert results(report)["custom_properties"].status == "skipped"
     assert report.summary["undeletable"] == 5  # the file of the comments area, the custom asset, two documents and the file of the first

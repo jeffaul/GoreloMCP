@@ -12,7 +12,7 @@ Usage:
     auth = PersonalAuthProvider(
         base_url="https://your-domain.com",
         password="your-secret-password",
-        allowed_redirect_domains=["claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost"],
+        allowed_redirect_domains=["claude.ai", "claude.com", "localhost"],
     )
 
     mcp = FastMCP(name="my-server", auth=auth)
@@ -174,7 +174,7 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
                 that nobody has to prove anything for would be open to whoever registers a client.
                 A password shorter than 16 characters starts, with a warning.
             allowed_redirect_domains: List of domains allowed in OAuth redirect URIs (a domain and
-                its subdomains). None, the default, means ["claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost"]:
+                its subdomains). None, the default, means ["claude.ai", "claude.com", "localhost"]:
                 there is no constructor setting that allows every domain. Whatever the list says,
                 an address is accepted only as https, or as http to localhost or a loopback address
                 that the list names (see oauth_guard.redirect_problem).
@@ -210,7 +210,7 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
 
         self.password = password
         self.allowed_redirect_domains = allowed_redirect_domains if allowed_redirect_domains is not None else [
-            "claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost"
+            "claude.ai", "claude.com", "localhost"
         ]
         self.access_token_expiry_seconds = access_token_expiry_seconds
         self.refresh_access_token_expiry_seconds = refresh_access_token_expiry_seconds

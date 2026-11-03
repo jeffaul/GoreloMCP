@@ -211,19 +211,19 @@ EXPECTED_TOOLS = {
     "list_ticket_statuses": ("read", ["GET /v1/tickets/statuses"]),
     "list_ticket_types": ("read", ["GET /v1/tickets/types"]),
     "list_ticket_tags": ("read", ["GET /v1/tickets/tags"]),
-    "list_ticket_priorities": ("read", ["GET /v1/tickets"]),
-    "list_ticket_sources": ("read", ["GET /v1/tickets"]),
+    "list_ticket_priorities": ("read", ["GET /v1/tickets/priorities"]),
+    "list_ticket_sources": ("read", ["GET /v1/tickets/sources"]),
 }
 
 EXPECTED_PARAMS = {
     "list_tickets": [
         "status_ids", "client_ids", "priority_ids", "type_ids", "lead_assignee_ids", "contact_ids", "tag_ids",
-        "group_ids", "query", "updated_since", "updated_before", "created_since", "created_before", "sort_by",
-        "sort_order", "page_size", "cursor",
+        "group_ids", "device_ids", "source_ids", "query", "updated_since", "updated_before", "created_since",
+        "created_before", "closed_since", "closed_before", "sort_by", "sort_order", "page_size", "cursor",
     ],
     "search_tickets": [
-        "client_id", "status", "priority", "type", "query", "updated_since", "created_since", "unassigned_only",
-        "awaiting_client", "unread_only", "exclude_closed", "limit",
+        "client_id", "status", "priority", "type", "source_ids", "query", "updated_since", "created_since",
+        "closed_since", "closed_before", "unassigned_only", "awaiting_client", "unread_only", "exclude_closed", "limit",
     ],
     "get_ticket": ["ticket_id"],
     "create_ticket": [
@@ -233,8 +233,8 @@ EXPECTED_PARAMS = {
         "created_by_name", "is_unread", "send_created_email",
     ],
     "update_ticket": [
-        "ticket_id", "title", "status_id", "priority_id", "type_id", "client_id", "location_id", "contact_id",
-        "cc_contact_ids", "group_ids", "lead_assignee_id", "assisting_assignee_ids", "watcher_ids", "tag_ids",
+        "ticket_id", "title", "status_id", "priority_id", "source_id", "type_id", "client_id", "location_id",
+        "contact_id", "cc_contact_ids", "group_ids", "lead_assignee_id", "assisting_assignee_ids", "watcher_ids", "tag_ids",
         "agent_asset_ids", "custom_asset_ids", "uptime_ids", "closed_on", "updated_on", "updated_by_name",
         "billing_service_line_id", "billing_role_id", "billing_work_type_id", "billable_status_id", "clear_fields",
     ],
@@ -317,10 +317,20 @@ def test_the_field_maps_name_real_spec_fields_and_cover_every_field(spec_index):
     expected = {name for name in update.body["fields"] if name != "BillingOverride"}
     expected |= {f"BillingOverride.{name}" for name in billing}
     assert set(tickets.UPDATE_FIELDS.values()) == expected
+    assert "SourceId" in update.body["fields"] and tickets.UPDATE_FIELDS["source_id"] == "SourceId"  # new in 6c30770dffc0
     listing = spec_index.op("GET /v1/tickets")
-    assert set(tickets.LIST_QUERY_FIELDS.values()) | {"PageSize", "Cursor"} == set(listing.query_params) - {"DeviceIds"}
-    assert set(tickets.LIST_ERROR_FIELDS.values()) == set(listing.query_params) - {"DeviceIds"}
-    assert set(tickets.SEARCH_ERROR_FIELDS.values()) <= {"ClientIds", "StatusIds", "PriorityIds", "TypeIds", "Query", "UpdatedSince", "CreatedSince"}
+    assert "DeviceIds" in listing.query_params  # new in contract 05200951c89e
+    assert {"SourceIds", "ClosedSince", "ClosedBefore"} <= set(listing.query_params)  # new in 6c30770dffc0
+    assert set(tickets.LIST_QUERY_FIELDS.values()) | {"PageSize", "Cursor"} == set(listing.query_params)
+    assert set(tickets.LIST_ERROR_FIELDS.values()) == set(listing.query_params)
+    assert set(tickets.SEARCH_ERROR_FIELDS.values()) <= {
+        "ClientIds", "StatusIds", "PriorityIds", "TypeIds", "SourceIds", "Query", "UpdatedSince", "CreatedSince",
+        "ClosedSince", "ClosedBefore",
+    }
+    assert set(tickets.SEARCH_ERROR_FIELDS.values()) <= set(listing.query_params)
+    for path in ("/v1/tickets/priorities", "/v1/tickets/sources"):
+        lookup = spec_index.op(f"GET {path}")
+        assert not lookup.paged and not lookup.query_params
     assert listing.paged and not spec_index.op("GET /v1/tickets/statuses").paged
     assert set(tickets.CLEARABLE_FIELDS) <= set(tickets.UPDATE_FIELDS)
     assert "BillingOverride.ContractServiceId" not in tickets.UPDATE_FIELDS.values()
@@ -331,6 +341,8 @@ def test_the_constant_tables_match_the_spec_enums(spec_index):
     assert [name for _, name in tickets.PRIORITIES] == ["None", "Urgent", "High", "Normal", "Low"]
     assert [sid for sid, _ in tickets.SOURCES] == spec_index.schema("TicketSource")["enum"] == [1, 2, 3, 4, 5, 6]
     assert [name for _, name in tickets.SOURCES] == ["Web", "Email", "Phone", "Chat", "Alert", "Api"]
+    # a write takes 1 to 6; the source_ids filter and the live list also know 7 (Messenger)
+    assert tickets.SOURCE_FILTER_IDS == (1, 2, 3, 4, 5, 6, 7) and tickets.SOURCE_MESSENGER_ID == 7
     assert tickets.BILLABLE_STATUSES == ((1, "Billable"), (2, "No charge"), (3, "Non-billable"))
     assert tickets.QUERY_MAX_CHARS == 200 and tickets.TITLE_MAX_CHARS == 250
 
@@ -391,16 +403,21 @@ def test_the_docstrings_carry_what_the_documentation_requires():
         "(not for a close with closed_on)",
         "REPLACE the whole list",
         "name it in clear_fields",
-        "cannot be unassigned",
+        "unassigning (LeadAssigneeId 0) is not offered yet",
         "{Id, warning}: the update WAS applied, do not repeat it",
         # live, 2026-10-02: one technician cannot be lead (or assisting) and watcher in the same ticket
         "A technician cannot be lead (or assisting) and watcher at once.",
     ):
         assert fragment in doc["update_ticket"], fragment
     assert "0 None, 1 Urgent, 2 High, 3 Normal, 4 Low" in doc["list_ticket_priorities"]
+    assert "the same for every account" in doc["list_ticket_priorities"]
     assert "The same ids work for create, update, filters and reads" in doc["list_ticket_priorities"]
-    assert "1 Web, 2 Email, 3 Phone, 4 Chat, 5 Alert, 6 Api" in doc["list_ticket_sources"]
-    assert "Id 7 appears on older tickets with no name and cannot be set" in doc["list_ticket_sources"]
+    assert "the same for every account" in doc["list_ticket_sources"]
+    assert "accept every id but 7 (Messenger)" in doc["list_ticket_sources"]
+    assert "source_ids filter of list_tickets and search_tickets accepts all of them" in doc["list_ticket_sources"]
+    for fragment in ("closed_since and closed_before keep only closed tickets (a never-closed ticket is left out)",):
+        assert fragment in doc["list_tickets"], fragment
+    assert "type, source, text, dates" in doc["search_tickets"]
     for name in ("list_ticket_statuses", "list_ticket_types", "list_ticket_tags"):
         assert "Id, Name" in doc[name] and "Returns {items, count}" in doc[name], name
     for name, spec in mine().items():  # the template line: a read tool says it has no side effects
@@ -414,9 +431,13 @@ RESOLVERS = {
     "list_tickets": {
         "status_ids": "list_ticket_statuses", "client_ids": "list_clients", "type_ids": "list_ticket_types",
         "lead_assignee_ids": "list_org_users", "contact_ids": "list_contacts", "tag_ids": "list_ticket_tags",
-        "group_ids": "list_org_groups", "priority_ids": "list_ticket_priorities",
+        "group_ids": "list_org_groups", "priority_ids": "list_ticket_priorities", "device_ids": "list_agents",
+        "source_ids": "list_ticket_sources",
     },
-    "search_tickets": {"client_id": "list_clients", "status": "list_ticket_statuses", "type": "list_ticket_types"},
+    "search_tickets": {
+        "client_id": "list_clients", "status": "list_ticket_statuses", "type": "list_ticket_types",
+        "source_ids": "list_ticket_sources",
+    },
     "create_ticket": {
         "client_id": "list_clients", "status_id": "list_ticket_statuses", "type_id": "list_ticket_types",
         "group_id": "list_org_groups", "contact_id": "list_contacts", "cc_contact_ids": "list_contacts",
@@ -426,6 +447,7 @@ RESOLVERS = {
     },
     "update_ticket": {
         "status_id": "list_ticket_statuses", "type_id": "list_ticket_types", "client_id": "list_clients",
+        "source_id": "list_ticket_sources",
         "location_id": "list_client_locations", "contact_id": "list_contacts", "cc_contact_ids": "list_contacts",
         "group_ids": "list_org_groups", "lead_assignee_id": "list_org_users",
         "assisting_assignee_ids": "list_org_users", "watcher_ids": "list_org_users", "tag_ids": "list_ticket_tags",
@@ -469,7 +491,8 @@ async def test_the_parameter_descriptions_carry_the_warnings_and_the_scales(serv
     assert describe["search_tickets"]["priority"] == f"Name or id: {scale}"
     assert "1 Web, 2 Email, 3 Phone, 4 Chat, 5 Alert, 6 Api" in describe["create_ticket"]["source_id"]
     assert "1 Billable, 2 No charge, 3 Non-billable" in describe["update_ticket"]["billable_status_id"]
-    assert "cannot unassign" in describe["update_ticket"]["lead_assignee_id"]
+    assert "unassigning (LeadAssigneeId 0) is not offered yet" in describe["update_ticket"]["lead_assignee_id"]
+    assert "cannot unassign" not in describe["update_ticket"]["lead_assignee_id"]
     # live, 2026-10-02: a technician holds one role: Gorelo answers 400 "Technician already exists" for lead or assisting plus watcher
     conflict = 'Gorelo answers 400 "Technician already exists"'
     assert "Not also a watcher: " + conflict in describe["update_ticket"]["lead_assignee_id"]
@@ -511,47 +534,80 @@ def test_the_module_is_plain_ascii_without_dashes():
 
 
 # --------------------------------------------------------------------------
-# list_ticket_priorities and list_ticket_sources: local tables, no HTTP
+# list_ticket_priorities and list_ticket_sources: the live fixed scales (1.5.0), unpaged {Id, Name}
 # --------------------------------------------------------------------------
 
+PRIORITIES_PATH = "/v1/tickets/priorities"
+SOURCES_PATH = "/v1/tickets/sources"
+LIVE_PRIORITIES = [
+    {"Id": 0, "Name": "None"}, {"Id": 1, "Name": "Urgent"}, {"Id": 2, "Name": "High"}, {"Id": 3, "Name": "Normal"},
+    {"Id": 4, "Name": "Low"},
+]
+LIVE_SOURCES = [
+    {"Id": 1, "Name": "Web"}, {"Id": 2, "Name": "Email"}, {"Id": 3, "Name": "Phone"}, {"Id": 4, "Name": "Chat"},
+    {"Id": 5, "Name": "Alert"}, {"Id": 6, "Name": "API"}, {"Id": 7, "Name": "Messenger"},
+]
 
-async def test_list_ticket_priorities_is_the_one_local_scale_and_makes_no_http_call(server, mock_gorelo):
+
+async def test_list_ticket_priorities_is_one_get_of_the_live_scale_and_returns_the_unpaged_list(server, mock_gorelo):
+    mock_gorelo.on("GET", PRIORITIES_PATH, envelope(LIVE_PRIORITIES))
     result = await call_tool(server, "list_ticket_priorities")
-    assert result == {
-        "items": [
-            {"Id": 0, "Name": "None"},
-            {"Id": 1, "Name": "Urgent"},
-            {"Id": 2, "Name": "High"},
-            {"Id": 3, "Name": "Normal"},
-            {"Id": 4, "Name": "Low"},
-        ],
-        "count": 5,
-    }
-    assert mock_gorelo.requests == []
+    assert result == {"items": LIVE_PRIORITIES, "count": 5}
+    request = mock_gorelo.last
+    assert (request.method, request.path, request.query, request.json) == ("GET", PRIORITIES_PATH, {}, None)
+    assert len(mock_gorelo.requests) == 1  # never PageSize or Cursor on an unpaged op
 
 
-async def test_list_ticket_sources_is_the_local_table_with_the_note_about_id_7(server, mock_gorelo):
+async def test_list_ticket_sources_is_one_get_of_the_live_scale_with_the_note_about_id_7(server, mock_gorelo):
+    mock_gorelo.on("GET", SOURCES_PATH, envelope(LIVE_SOURCES))
     result = await call_tool(server, "list_ticket_sources")
-    assert result["items"] == [
-        {"Id": 1, "Name": "Web"},
-        {"Id": 2, "Name": "Email"},
-        {"Id": 3, "Name": "Phone"},
-        {"Id": 4, "Name": "Chat"},
-        {"Id": 5, "Name": "Alert"},
-        {"Id": 6, "Name": "Api"},
-    ]
-    assert result["count"] == 6 and set(result) == {"items", "count", "note"}
-    assert "Id 7" in result["note"] and "empty name" in result["note"] and "cannot be set" in result["note"]
-    assert "source_id 1 to 6" in result["note"]
-    assert 7 not in [row["Id"] for row in result["items"]]
-    assert mock_gorelo.requests == []
+    assert result == {"items": LIVE_SOURCES, "count": 7, "note": tickets.SOURCES_NOTE}
+    request = mock_gorelo.last
+    assert (request.method, request.path, request.query, request.json) == ("GET", SOURCES_PATH, {}, None)
+    assert len(mock_gorelo.requests) == 1
+    # what the note says is what the spec says: 7 (Messenger) is read back only, a write takes 1 to 6
+    assert "Id 7 (Messenger)" in result["note"] and "cannot be set" in result["note"]
+    assert "create_ticket and update_ticket accept source_id 1 to 6 only" in result["note"]
 
 
-async def test_the_local_tables_are_fresh_copies_on_every_call(server):
-    first = await call_tool(server, "list_ticket_priorities")
-    first["items"].clear()
-    assert (await call_tool(server, "list_ticket_priorities"))["count"] == 5
-    assert tickets.PRIORITIES[0] == (0, "None")
+@pytest.mark.parametrize("tool, path", [("list_ticket_priorities", PRIORITIES_PATH), ("list_ticket_sources", SOURCES_PATH)])
+async def test_the_live_scale_tools_report_an_empty_list_as_count_zero_never_the_old_table(server, mock_gorelo, tool, path):
+    mock_gorelo.on("GET", path, envelope([]))
+    result = await call_tool(server, tool)
+    assert result["items"] == [] and result["count"] == 0
+
+
+@pytest.mark.parametrize("tool, path", [("list_ticket_priorities", PRIORITIES_PATH), ("list_ticket_sources", SOURCES_PATH)])
+async def test_the_live_scale_tools_refuse_a_data_that_is_not_a_list(server, mock_gorelo, tool, path):
+    mock_gorelo.on("GET", path, envelope({"Id": 1}))
+    text = await call_tool_error(server, tool)
+    assert text.startswith(f"Gorelo returned an unexpected response for {tool}:") and "expected Data to be a list" in text
+
+
+@pytest.mark.parametrize("tool, path", [("list_ticket_priorities", PRIORITIES_PATH), ("list_ticket_sources", SOURCES_PATH)])
+async def test_the_live_scale_tools_name_themselves_in_a_gorelo_error(server, mock_gorelo, tool, path):
+    mock_gorelo.on("GET", path, error_envelope(403, [("080203", "API key does not have 'Tickets' scope")], trace_id="00-t-1"))
+    text = await call_tool_error(server, tool)
+    assert text.startswith(f"Gorelo rejected {tool} (HTTP 403, code 080203): the API key does not have the 'Tickets' scope")
+    assert text.endswith("[trace 00-t-1]")
+
+
+async def test_the_local_tables_are_still_the_checks_of_the_ids_a_write_takes(server):
+    assert tickets.PRIORITIES[0] == (0, "None") and tickets.SOURCES[0] == (1, "Web")
+    assert tickets.PRIORITY_IDS == (0, 1, 2, 3, 4) and tickets.SOURCE_IDS == (1, 2, 3, 4, 5, 6)
+
+
+@needs_spec_text
+def test_the_two_new_lookups_say_what_the_tool_texts_say():
+    priorities = " ".join(operation("get", "/v1/tickets/priorities")["description"].split())
+    sources = " ".join(operation("get", "/v1/tickets/sources")["description"].split())
+    assert "The fixed priority scale as `{ Id, Name }`, the same for every account" in priorities
+    assert "Not paginated" in priorities and "Not paginated" in sources
+    assert "`SourceId` on create and update accepts all of them except 7 (Messenger), which only appears on tickets read back" in sources
+    schema = json.loads(LATEST_SPEC.read_text(encoding="utf-8"))["components"]["schemas"]["TicketSource"]
+    assert schema["enum"] == [1, 2, 3, 4, 5, 6]  # the write enum has no 7
+    sort_text = " ".join(next(p for p in operation("get", "/v1/tickets")["parameters"] if p["name"] == "SourceIds")["description"].split())
+    assert "1 Web, 2 Email, 3 Phone, 4 Chat, 5 Alert, 6 API, 7 Messenger" in sort_text and "up to 100" in sort_text
 
 
 # --------------------------------------------------------------------------
@@ -634,11 +690,15 @@ async def test_list_tickets_sends_every_filter_with_the_spec_names_and_reports_t
             "contact_ids": [9103],
             "tag_ids": [5, 6],
             "group_ids": [7201],
+            "device_ids": [DEV_B.upper(), DEV_A],
+            "source_ids": [2, 7],
             "query": "  printer  ",
             "updated_since": "2026-10-01T09:30:00-05:00",
             "updated_before": "2026-10-02T00:00:00Z",
             "created_since": "2026-09-01T00:00:00+00:00",
             "created_before": "2026-10-01T00:00:00Z",
+            "closed_since": "2026-09-15T00:00:00-04:00",
+            "closed_before": "2026-09-30T00:00:00Z",
             "sort_by": "createdOn",
             "sort_order": "asc",
             "page_size": 25,
@@ -654,11 +714,15 @@ async def test_list_tickets_sends_every_filter_with_the_spec_names_and_reports_t
         "ContactIds": "9103",
         "TagIds": "5,6",
         "GroupIds": "7201",
+        "DeviceIds": f"{DEV_B},{DEV_A}",
+        "SourceIds": "2,7",
         "Query": "printer",
         "UpdatedSince": "2026-10-01T14:30:00Z",
         "UpdatedBefore": "2026-10-02T00:00:00Z",
         "CreatedSince": "2026-09-01T00:00:00Z",
         "CreatedBefore": "2026-10-01T00:00:00Z",
+        "ClosedSince": "2026-09-15T04:00:00Z",
+        "ClosedBefore": "2026-09-30T00:00:00Z",
         "SortBy": "createdOn",
         "SortOrder": "asc",
         "PageSize": "25",
@@ -673,16 +737,23 @@ async def test_list_tickets_sends_every_filter_with_the_spec_names_and_reports_t
         "contact_ids": [9103],
         "tag_ids": [5, 6],
         "group_ids": [7201],
+        "device_ids": [DEV_B, DEV_A],
+        "source_ids": [2, 7],
         "query": "printer",
         "updated_since": "2026-10-01T14:30:00Z",
         "updated_before": "2026-10-02T00:00:00Z",
         "created_since": "2026-09-01T00:00:00Z",
         "created_before": "2026-10-01T00:00:00Z",
+        "closed_since": "2026-09-15T04:00:00Z",
+        "closed_before": "2026-09-30T00:00:00Z",
         "sort_by": "createdOn",
         "sort_order": "asc",
     }
     assert result["page_size"] == 25 and result["has_more"] is False and result["next_cursor"] is None
 
+
+DEV_A = "11111111-2222-4333-8444-555555555555"
+DEV_B = "66666666-7777-4888-9999-000000000000"
 
 SINGLE_LIST_FILTERS = [
     ("status_ids", [7, 8], "StatusIds", "7,8"),
@@ -693,11 +764,17 @@ SINGLE_LIST_FILTERS = [
     ("contact_ids", [9103, 9104], "ContactIds", "9103,9104"),
     ("tag_ids", [5], "TagIds", "5"),
     ("group_ids", [7201], "GroupIds", "7201"),
+    ("device_ids", [DEV_A.upper()], "DeviceIds", DEV_A),
+    ("device_ids", [DEV_A, DEV_B.replace("-", "")], "DeviceIds", f"{DEV_A},{DEV_B}"),
     ("query", "TCK-1234", "Query", "TCK-1234"),
     ("updated_since", "2026-10-01T00:00:00Z", "UpdatedSince", "2026-10-01T00:00:00Z"),
     ("updated_before", "2026-10-01T02:00:00+02:00", "UpdatedBefore", "2026-10-01T00:00:00Z"),
     ("created_since", "2026-09-30T20:00:00-04:00", "CreatedSince", "2026-10-01T00:00:00Z"),
     ("created_before", "2026-10-01T00:00:00Z", "CreatedBefore", "2026-10-01T00:00:00Z"),
+    ("closed_since", "2026-09-30T20:00:00-04:00", "ClosedSince", "2026-10-01T00:00:00Z"),
+    ("closed_before", "2026-10-01T02:00:00+02:00", "ClosedBefore", "2026-10-01T00:00:00Z"),
+    ("source_ids", [1], "SourceIds", "1"),
+    ("source_ids", [6, 7, 2], "SourceIds", "6,7,2"),
     ("sort_by", "updatedOn", "SortBy", "updatedOn"),
     ("sort_by", "createdOn", "SortBy", "createdOn"),
     ("sort_order", "asc", "SortOrder", "asc"),
@@ -770,11 +847,25 @@ LIST_VALIDATION = [
     pytest.param({"client_ids": [5, 0]}, f"client_ids[1]: {NOT_POSITIVE}", id="second-client-id-zero"),
     pytest.param({"type_ids": [-3]}, f"type_ids[0]: {NOT_POSITIVE}", id="negative-type-id"),
     pytest.param({"group_ids": []}, f"group_ids: {NO_IDS}", id="empty-group-ids"),
+    pytest.param({"device_ids": []}, "device_ids: expected at least one GUID, got an empty list", id="empty-device-ids"),
+    pytest.param({"device_ids": [DEV_A, "not-a-guid"]}, "device_ids[1]: expected a GUID such as", id="bad-device-id"),
+    pytest.param({"device_ids": [DEV_A] * 101}, "device_ids: at most 100 values, got 101", id="too-many-device-ids"),
     pytest.param({"lead_assignee_ids": [0]}, f"lead_assignee_ids[0]: {NOT_POSITIVE}", id="assignee-zero"),
     pytest.param({"contact_ids": [2**63]}, "contact_ids[0]: expected a positive whole number such as 123, got a number above", id="contact-id-above-int64"),
     pytest.param({"priority_ids": [5]}, "priority_ids[0]: must be one of 0 None, 1 Urgent, 2 High, 3 Normal, 4 Low", id="priority-5"),
     pytest.param({"priority_ids": [1, -1]}, "priority_ids[1]: must be one of 0 None", id="priority-negative"),
     pytest.param({"priority_ids": []}, "priority_ids: expected a non-empty list of ids, got an empty list", id="empty-priority-ids"),
+    pytest.param({"source_ids": [0]}, "source_ids[0]: must be one of 1 Web, 2 Email, 3 Phone, 4 Chat, 5 Alert, 6 Api, 7 Messenger", id="source-0"),
+    pytest.param({"source_ids": [1, 8]}, "source_ids[1]: must be one of 1 Web", id="source-8"),
+    pytest.param({"source_ids": []}, "source_ids: expected a non-empty list of ids, got an empty list", id="empty-source-ids"),
+    pytest.param({"source_ids": [1] * 101}, "source_ids: Gorelo accepts at most 100 ids in one filter, got 101", id="too-many-source-ids"),
+    pytest.param({"closed_since": "2026-10-01T09:30:00"}, "closed_since: '2026-10-01T09:30:00' has no UTC offset", id="naive-closed-since"),
+    pytest.param({"closed_before": "later"}, "closed_before: 'later' is not an ISO 8601 datetime", id="bad-closed-before"),
+    pytest.param(
+        {"closed_since": "2026-10-02T00:00:00Z", "closed_before": "2026-10-01T00:00:00Z"},
+        "closed_since: 2026-10-02T00:00:00Z is not earlier than closed_before (2026-10-01T00:00:00Z)",
+        id="closed-range-reversed",
+    ),
     pytest.param({"query": "   "}, "query: must not be empty or whitespace only", id="blank-query"),
     pytest.param({"query": "x" * 201}, "query: at most 200 characters, got 201", id="long-query"),
     # a blank cursor is a caller mistake, not "the first page" (that is no cursor at all)
@@ -817,6 +908,8 @@ async def test_list_tickets_local_validation_errors_name_the_parameter_and_send_
         ({"sort_order": "up"}, "sort_order"),
         ({"page_size": "many"}, "page_size"),
         ({"status_ids": ["new"]}, "status_ids"),
+        ({"source_ids": [True]}, "source_ids"),
+        ({"source_ids": ["2"]}, "source_ids"),
         ({"cursor": 12}, "cursor"),
     ],
 )
@@ -840,7 +933,7 @@ async def test_list_tickets_maps_a_gorelo_error_to_the_snake_case_parameter(serv
     )
 
 
-@pytest.mark.parametrize("prop, param", [("Query", "query"), ("UpdatedSince", "updated_since"), ("SortBy", "sort_by"), ("Cursor", "cursor"), ("PriorityIds", "priority_ids")])
+@pytest.mark.parametrize("prop, param", [("Query", "query"), ("UpdatedSince", "updated_since"), ("SortBy", "sort_by"), ("Cursor", "cursor"), ("PriorityIds", "priority_ids"), ("DeviceIds", "device_ids"), ("SourceIds", "source_ids"), ("ClosedSince", "closed_since"), ("ClosedBefore", "closed_before")])
 async def test_list_tickets_maps_every_query_name_back_to_its_parameter(server, mock_gorelo, prop, param):
     mock_gorelo.on("GET", LIST, error_envelope(400, [("070101", "bad value", prop)]))
     text = await call_tool_error(server, "list_tickets")
@@ -894,9 +987,12 @@ async def test_search_tickets_sends_exactly_the_server_side_query_and_resolves_n
             "status": "closed",
             "priority": "high",
             "type": "INCIDENT",
+            "source_ids": [2, 3],
             "query": " printer ",
             "updated_since": "2026-10-01T09:30:00-05:00",
             "created_since": "2026-09-01T00:00:00Z",
+            "closed_since": "2026-09-10T00:00:00Z",
+            "closed_before": "2026-09-20T12:00:00+02:00",
             "limit": 10,
         },
     )
@@ -907,9 +1003,12 @@ async def test_search_tickets_sends_exactly_the_server_side_query_and_resolves_n
         "StatusIds": "4",
         "PriorityIds": "2",
         "TypeIds": "7101",
+        "SourceIds": "2,3",
         "Query": "printer",
         "UpdatedSince": "2026-10-01T14:30:00Z",
         "CreatedSince": "2026-09-01T00:00:00Z",
+        "ClosedSince": "2026-09-10T00:00:00Z",
+        "ClosedBefore": "2026-09-20T10:00:00Z",
         "PageSize": "200",
     }
     for lookup_path in (STATUSES_PATH, TYPES_PATH):
@@ -923,9 +1022,12 @@ async def test_search_tickets_sends_exactly_the_server_side_query_and_resolves_n
         "priority_id": 2,
         "type": "Incident",
         "type_id": 7101,
+        "source_ids": [2, 3],
         "query": "printer",
         "updated_since": "2026-10-01T14:30:00Z",
         "created_since": "2026-09-01T00:00:00Z",
+        "closed_since": "2026-09-10T00:00:00Z",
+        "closed_before": "2026-09-20T10:00:00Z",
         "limit": 10,
     }
     assert [r.method for r in mock_gorelo.requests] == ["GET"] * 3
@@ -1072,6 +1174,27 @@ SEARCH_VALIDATION = [
     pytest.param({"updated_since": "2026-10-01"}, "updated_since: '2026-10-01' has no UTC offset", id="naive-updated-since"),
     pytest.param({"created_since": "2026-10-01T00:00:00"}, "created_since: '2026-10-01T00:00:00' has no UTC offset", id="naive-created-since"),
     pytest.param({"created_since": "soon"}, "created_since: 'soon' is not an ISO 8601 datetime", id="bad-created-since"),
+    pytest.param({"source_ids": [0]}, "source_ids[0]: must be one of 1 Web, 2 Email, 3 Phone, 4 Chat, 5 Alert, 6 Api, 7 Messenger", id="source-0"),
+    pytest.param({"source_ids": [8]}, "source_ids[0]: must be one of 1 Web", id="source-8"),
+    pytest.param({"source_ids": []}, "source_ids: expected a non-empty list of ids, got an empty list", id="empty-source-ids"),
+    pytest.param({"source_ids": [1] * 101}, "source_ids: Gorelo accepts at most 100 ids in one filter, got 101", id="too-many-source-ids"),
+    pytest.param({"closed_since": "2026-10-01"}, "closed_since: '2026-10-01' has no UTC offset", id="naive-closed-since"),
+    pytest.param({"closed_before": "soon"}, "closed_before: 'soon' is not an ISO 8601 datetime", id="bad-closed-before"),
+    pytest.param(
+        {"closed_since": "2026-10-02T00:00:00Z", "closed_before": "2026-10-02T00:00:00Z"},
+        "closed_since: 2026-10-02T00:00:00Z is not earlier than closed_before",
+        id="closed-range-empty",
+    ),
+    pytest.param(
+        {"exclude_closed": True, "closed_since": "2026-10-01T00:00:00Z"},
+        "exclude_closed: cannot be combined with closed_since or closed_before",
+        id="exclude-closed-with-closed-since",
+    ),
+    pytest.param(
+        {"exclude_closed": True, "closed_before": "2026-10-01T00:00:00Z"},
+        "exclude_closed: cannot be combined with closed_since or closed_before",
+        id="exclude-closed-with-closed-before",
+    ),
 ]
 
 
@@ -1130,6 +1253,10 @@ SINGLE_SEARCH_FILTERS = [
     ({"query": "  TCK-1234 "}, {"Query": "TCK-1234"}),
     ({"updated_since": "2026-10-01T02:00:00+02:00"}, {"UpdatedSince": "2026-10-01T00:00:00Z"}),
     ({"created_since": "2026-09-30T20:00:00-04:00"}, {"CreatedSince": "2026-10-01T00:00:00Z"}),
+    ({"closed_since": "2026-09-30T20:00:00-04:00"}, {"ClosedSince": "2026-10-01T00:00:00Z"}),
+    ({"closed_before": "2026-10-01T02:00:00+02:00"}, {"ClosedBefore": "2026-10-01T00:00:00Z"}),
+    ({"source_ids": [7]}, {"SourceIds": "7"}),
+    ({"source_ids": [1, 6]}, {"SourceIds": "1,6"}),
     ({"status": 4}, {"StatusIds": "4"}),
     ({"type": 7101}, {"TypeIds": "7101"}),
 ]
@@ -1379,7 +1506,7 @@ async def test_search_tickets_maps_a_gorelo_error_to_the_snake_case_parameter(se
     )
 
 
-@pytest.mark.parametrize("prop, param", [("ClientIds", "client_id"), ("PriorityIds", "priority"), ("TypeIds", "type"), ("Query", "query"), ("UpdatedSince", "updated_since"), ("CreatedSince", "created_since")])
+@pytest.mark.parametrize("prop, param", [("ClientIds", "client_id"), ("PriorityIds", "priority"), ("TypeIds", "type"), ("Query", "query"), ("UpdatedSince", "updated_since"), ("CreatedSince", "created_since"), ("SourceIds", "source_ids"), ("ClosedSince", "closed_since"), ("ClosedBefore", "closed_before")])
 async def test_search_tickets_maps_every_server_side_name_back_to_its_parameter(server, mock_gorelo, prop, param):
     mock_gorelo.on("GET", LIST, error_envelope(400, [("070101", "rejected", prop)]))
     text = await call_tool_error(server, "search_tickets")
@@ -1802,21 +1929,22 @@ REREAD = "GET /v1/tickets/{ticketId}"
 
 
 @pytest.mark.parametrize(
-    "response, reason",
+    "response, reason, reads",
     [
         pytest.param(error_envelope(404, [("070401", "Ticket not found")], trace_id="00-t-1"),
-                     f"{REREAD} answered HTTP 404 (code 070401): Ticket not found [trace 00-t-1]", id="404"),
+                     f"{REREAD} answered HTTP 404 (code 070401): Ticket not found [trace 00-t-1]", 1, id="404"),
         pytest.param(error_envelope(500, [("070001", "Internal error")], trace_id="00-t-2"),
-                     f"{REREAD} answered HTTP 500 (code 070001): Internal error [trace 00-t-2]", id="500"),
-        pytest.param(httpx.ReadTimeout("slow"), f"{REREAD} timed out", id="timeout"),
-        pytest.param(httpx.ConnectError("refused"), f"the connection to Gorelo failed during {REREAD}", id="connection"),
-        pytest.param(httpx.Response(502, text="<html>Bad Gateway</html>"), f"{REREAD}: unexpected response shape; refusing to guess (HTTP 502", id="gateway-page"),
-        pytest.param(envelope(None), f"{REREAD}: Gorelo reported success but Data is null; refusing to guess", id="data-null"),
-        pytest.param(envelope([ticket_detail(5)]), f"{REREAD} returned a list instead of the record", id="data-is-a-list"),
+                     f"{REREAD} answered HTTP 500 (code 070001): Internal error [trace 00-t-2]", 1, id="500"),
+        pytest.param(httpx.ReadTimeout("slow"), f"{REREAD} timed out", 1, id="timeout"),
+        # a read that gets a refused connection or a 502/503/504 is sent once more (1.4.2); the POST is still sent once
+        pytest.param(httpx.ConnectError("refused"), f"the connection to Gorelo failed during {REREAD}", 2, id="connection"),
+        pytest.param(httpx.Response(502, text="<html>Bad Gateway</html>"), f"{REREAD}: unexpected response shape; refusing to guess (HTTP 502", 2, id="gateway-page"),
+        pytest.param(envelope(None), f"{REREAD}: Gorelo reported success but Data is null; refusing to guess", 1, id="data-null"),
+        pytest.param(envelope([ticket_detail(5)]), f"{REREAD} returned a list instead of the record", 1, id="data-is-a-list"),
     ],
 )
 async def test_create_ticket_a_failed_reread_returns_the_id_and_a_warning_and_never_repeats_the_write(
-    server, mock_gorelo, response, reason
+    server, mock_gorelo, response, reason, reads
 ):
     mock_gorelo.on("POST", LIST, envelope({"Id": uid(5)}))
     mock_gorelo.on("GET", f"{LIST}/{uid(5)}", response)
@@ -1825,7 +1953,7 @@ async def test_create_ticket_a_failed_reread_returns_the_id_and_a_warning_and_ne
     assert result["warning"].startswith(f"the write succeeded; re-reading it failed: {reason}")
     assert result["warning"].endswith("Do not repeat the write; read it again later.")
     assert "create_ticket" not in result["warning"] and "Gorelo rejected" not in result["warning"]
-    assert len(mock_gorelo.calls("POST", LIST)) == 1 and len(mock_gorelo.calls("GET")) == 1
+    assert len(mock_gorelo.calls("POST", LIST)) == 1 and len(mock_gorelo.calls("GET")) == reads
 
 
 async def test_create_ticket_reads_back_an_id_that_came_with_padding(server, mock_gorelo):
@@ -1952,8 +2080,8 @@ CREATE_VALIDATION = [
     pytest.param({"client_id": 2**63}, "client_id: expected a positive whole number such as 123, got a number above", id="client-above-int64"),
     pytest.param({"priority_id": 5}, "priority_id: must be one of 0 None, 1 Urgent, 2 High, 3 Normal, 4 Low", id="priority-5"),
     pytest.param({"priority_id": -1}, "priority_id: must be one of 0 None", id="priority-negative"),
-    pytest.param({"source_id": 0}, f"source_id: must be one of {tickets.SOURCE_HELP}; Id 7 exists on older tickets but cannot be set", id="source-0"),
-    pytest.param({"source_id": 7}, f"source_id: must be one of {tickets.SOURCE_HELP}; Id 7 exists on older tickets but cannot be set", id="source-7"),
+    pytest.param({"source_id": 0}, f"source_id: must be one of {tickets.SOURCE_HELP}; id 7 (Messenger) only appears on tickets read back and cannot be set", id="source-0"),
+    pytest.param({"source_id": 7}, f"source_id: must be one of {tickets.SOURCE_HELP}; id 7 (Messenger) only appears on tickets read back and cannot be set", id="source-7"),
     pytest.param({"contact_id": 0}, f"contact_id: {NOT_POSITIVE}", id="contact-zero"),
     pytest.param({"location_id": 0}, f"location_id: {NOT_POSITIVE}", id="location-zero"),
     pytest.param({"lead_assignee_id": 0}, f"lead_assignee_id: {NOT_POSITIVE}", id="assignee-zero"),
@@ -2045,6 +2173,8 @@ SINGLE_UPDATE_FIELDS = [
     ("title", "Renamed", {"Title": "Renamed"}),
     ("status_id", 4, {"StatusId": 4}),
     ("priority_id", 1, {"PriorityId": 1}),
+    ("source_id", 1, {"SourceId": 1}),
+    ("source_id", 6, {"SourceId": 6}),
     ("type_id", 9301, {"TypeId": 9301}),
     ("client_id", 9101, {"ClientId": 9101}),
     ("location_id", 3001, {"LocationId": 3001}),
@@ -2079,6 +2209,7 @@ async def test_update_ticket_sends_every_changeable_field_in_pascal_case(server,
             "title": "Renamed",
             "status_id": 4,
             "priority_id": 2,
+            "source_id": 3,
             "type_id": 9301,
             "client_id": 9101,
             "location_id": 3001,
@@ -2106,6 +2237,7 @@ async def test_update_ticket_sends_every_changeable_field_in_pascal_case(server,
         "Title": "Renamed",
         "StatusId": 4,
         "PriorityId": 2,
+        "SourceId": 3,
         "TypeId": 9301,
         "ClientId": 9101,
         "LocationId": 3001,
@@ -2408,7 +2540,8 @@ async def test_update_ticket_a_billing_read_that_fails_or_cannot_be_used_sends_n
     assert fragment in text
     assert "may or may not have been applied" not in text and "the write may have been applied" not in text
     assert mock_gorelo.calls("PATCH") == []
-    assert [r.method for r in mock_gorelo.requests] == ["GET"]  # the read is not retried either
+    # the read is asked once more only after a refused connection (1.4.2); no PATCH follows either way
+    assert [r.method for r in mock_gorelo.requests] == ["GET"] * (2 if isinstance(response, httpx.ConnectError) else 1)
 
 
 async def test_update_ticket_a_billing_read_that_works_but_a_write_that_fails_is_reported_as_the_write(server, mock_gorelo):
@@ -2595,6 +2728,10 @@ UPDATE_VALIDATION = [
     pytest.param({"lead_assignee_id": 0}, f"lead_assignee_id: {NOT_POSITIVE}", id="unassign-with-zero-is-refused"),
     pytest.param({"priority_id": 5}, "priority_id: must be one of 0 None, 1 Urgent, 2 High, 3 Normal, 4 Low", id="priority-5"),
     pytest.param({"priority_id": -1}, "priority_id: must be one of 0 None", id="priority-negative"),
+    pytest.param({"source_id": 0}, f"source_id: must be one of {tickets.SOURCE_HELP}; id 7 (Messenger) only appears on tickets read back and cannot be set", id="source-0"),
+    pytest.param({"source_id": 7}, f"source_id: must be one of {tickets.SOURCE_HELP}; id 7 (Messenger) only appears on tickets read back and cannot be set", id="source-7"),
+    pytest.param({"source_id": 8}, "source_id: must be one of 1 Web, 2 Email, 3 Phone, 4 Chat, 5 Alert, 6 Api", id="source-8"),
+    pytest.param({"source_id": -1}, "source_id: must be one of 1 Web", id="source-negative"),
     pytest.param({"billable_status_id": 0}, "billable_status_id: must be one of 1 Billable, 2 No charge, 3 Non-billable", id="billable-0"),
     pytest.param({"billable_status_id": 4}, "billable_status_id: must be one of 1 Billable, 2 No charge, 3 Non-billable", id="billable-4"),
     pytest.param({"billing_service_line_id": 0}, f"billing_service_line_id: {NOT_POSITIVE}", id="service-line-zero"),
@@ -2622,7 +2759,7 @@ async def test_update_ticket_local_validation_errors_name_the_parameter_and_send
 
 
 async def test_update_ticket_rejects_values_of_the_wrong_kind_before_any_http_call(server, mock_gorelo):
-    for override, param in (({"status_id": "closed"}, "status_id"), ({"clear_fields": "tag_ids"}, "clear_fields"), ({"tag_ids": "5"}, "tag_ids"), ({"billable_status_id": "yes"}, "billable_status_id")):
+    for override, param in (({"source_id": "2"}, "source_id"), ({"source_id": True}, "source_id"), ({"status_id": "closed"}, "status_id"), ({"clear_fields": "tag_ids"}, "clear_fields"), ({"tag_ids": "5"}, "tag_ids"), ({"billable_status_id": "yes"}, "billable_status_id")):
         text = await call_tool_error(server, "update_ticket", {"ticket_id": T1, **override})
         assert param in text
     assert mock_gorelo.requests == []
@@ -2636,19 +2773,20 @@ async def test_update_ticket_cannot_unassign_or_clear_with_null(server, mock_gor
 
 
 @pytest.mark.parametrize(
-    "response, reason",
+    "response, reason, reads",
     [
         pytest.param(error_envelope(404, [("070401", "Ticket not found")], trace_id="00-t-1"),
-                     f"{REREAD} answered HTTP 404 (code 070401): Ticket not found [trace 00-t-1]", id="404"),
+                     f"{REREAD} answered HTTP 404 (code 070401): Ticket not found [trace 00-t-1]", 1, id="404"),
         pytest.param(error_envelope(500, [("070001", "Internal error")], trace_id="00-t-2"),
-                     f"{REREAD} answered HTTP 500 (code 070001): Internal error [trace 00-t-2]", id="500"),
-        pytest.param(httpx.ReadTimeout("slow"), f"{REREAD} timed out", id="timeout"),
-        pytest.param(httpx.Response(502, text="<html>Bad Gateway</html>"), f"{REREAD}: unexpected response shape; refusing to guess (HTTP 502", id="gateway-page"),
-        pytest.param(envelope(True), f"{REREAD} returned a boolean instead of the record", id="data-is-a-boolean"),
+                     f"{REREAD} answered HTTP 500 (code 070001): Internal error [trace 00-t-2]", 1, id="500"),
+        pytest.param(httpx.ReadTimeout("slow"), f"{REREAD} timed out", 1, id="timeout"),
+        # a read that gets a 502/503/504 is sent once more (1.4.2); the PATCH is still sent once
+        pytest.param(httpx.Response(502, text="<html>Bad Gateway</html>"), f"{REREAD}: unexpected response shape; refusing to guess (HTTP 502", 2, id="gateway-page"),
+        pytest.param(envelope(True), f"{REREAD} returned a boolean instead of the record", 1, id="data-is-a-boolean"),
     ],
 )
 async def test_update_ticket_a_failed_reread_returns_the_id_and_a_warning_and_never_repeats_the_write(
-    server, mock_gorelo, response, reason
+    server, mock_gorelo, response, reason, reads
 ):
     mock_gorelo.on("PATCH", f"{LIST}/{T1}", envelope({"Id": T1}))
     mock_gorelo.on("GET", f"{LIST}/{T1}", response)
@@ -2657,7 +2795,7 @@ async def test_update_ticket_a_failed_reread_returns_the_id_and_a_warning_and_ne
     assert result["warning"].startswith(f"the write succeeded; re-reading it failed: {reason}")
     assert result["warning"].endswith("Do not repeat the write; read it again later.")
     assert "update_ticket" not in result["warning"] and "Gorelo rejected" not in result["warning"]
-    assert len(mock_gorelo.calls("PATCH")) == 1 and len(mock_gorelo.calls("GET")) == 1
+    assert len(mock_gorelo.calls("PATCH")) == 1 and len(mock_gorelo.calls("GET")) == reads
 
 
 async def test_update_ticket_the_id_in_a_reread_warning_is_the_canonical_guid(server, mock_gorelo):
@@ -2833,7 +2971,7 @@ def tickets_op_key(path):
     """The op path (without the method) a recorded request path belongs to."""
     if path == LIST:
         return "/v1/tickets"
-    if path in (STATUSES_PATH, TYPES_PATH, TAGS_PATH):
+    if path in (STATUSES_PATH, TYPES_PATH, TAGS_PATH, PRIORITIES_PATH, SOURCES_PATH):
         return path
     return "/v1/tickets/{ticketId}"
 
@@ -2844,6 +2982,8 @@ async def test_every_tool_only_sends_operations_it_declared(server, mock_gorelo)
     lookups(mock_gorelo)
     mock_gorelo.on("GET", LIST, paged_envelope([ticket_row(2, Number=1234, DisplayNumber="TCK-1234")]))
     mock_gorelo.on("GET", TAGS_PATH, envelope(TAGS))
+    mock_gorelo.on("GET", PRIORITIES_PATH, envelope(LIVE_PRIORITIES))
+    mock_gorelo.on("GET", SOURCES_PATH, envelope(LIVE_SOURCES))
     mock_gorelo.on("GET", f"{LIST}/{T2}", envelope(ticket_detail(2)))
     mock_gorelo.on("POST", LIST, envelope({"Id": T2}))
     mock_gorelo.on("PATCH", f"{LIST}/{T2}", envelope({"Id": T2}))
@@ -3113,7 +3253,7 @@ def test_the_helpers_still_refuse_what_strict_typing_already_stops_before_the_to
         tickets._id_or_name("status", True)
     with pytest.raises(ValueError, match="priority_id: must be one of 0 None, 1 Urgent, 2 High, 3 Normal, 4 Low, got a boolean"):
         tickets._priority_id("priority_id", True)
-    with pytest.raises(ValueError, match="source_id: must be one of .*, got a string; Id 7 exists"):
+    with pytest.raises(ValueError, match="source_id: must be one of .*, got a string; id 7 \\(Messenger\\) only appears on tickets read back"):
         tickets._source_id("source_id", "2")
     with pytest.raises(ValueError, match="billable_status_id: must be one of 1 Billable, 2 No charge, 3 Non-billable, got a number"):
         tickets._billable_status_id("billable_status_id", 1.0)
@@ -3130,9 +3270,10 @@ DESCRIPTION_LIMITS = {"update_ticket": 900}  # every other tool: 700 characters
 PARAM_LIMIT = 160
 # The size measure (json.dumps of each tool as a client lists it, summed). The advertised
 # schemas are compacted centrally (server.compact_input_schema: no null branches, no "default": null), so what the
-# module still controls is its descriptions. Measured 16150 bytes (descriptions are 7034 of them) with every
-# statement kept; the limit is that plus 10 percent, rounded up to the next 100.
-MODULE_BYTES_LIMIT = 17800
+# module still controls is its descriptions. Measured 18314 bytes in 1.5.0 (16150 in 1.3.0; 1.5.0 added source_ids,
+# closed_since and closed_before to the two searches, source_id to update_ticket and the live priority and source
+# reads) with every statement kept; the limit is that plus 10 percent, rounded up to the next 100.
+MODULE_BYTES_LIMIT = 20200
 
 
 async def test_the_tool_list_keeps_to_the_concision_limits(server):

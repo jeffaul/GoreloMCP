@@ -49,6 +49,8 @@ import server as server_module
 import tools  # noqa: F401  importing the package fills the registry
 from gorelo_client import (
     FORBIDDEN_OPS,
+    GATEWAY_RETRY_STATUSES,
+    GATEWAY_RETRY_WAIT,
     GORELO_BASE_URL,
     MAX_PAGES,
     PAGE_SIZE_MAX,
@@ -98,7 +100,7 @@ SECTIONS = (
 RUNTIME_ONLY = (".env", ".oauth-state", ".state", ".live-runs", ".venv")
 
 # The only hostnames the document may spell out: the Gorelo API host, the AI client's own and the reserved test domain.
-ALLOWED_HOSTS = frozenset({"api.usw.gorelo.io", "api.aue.gorelo.io", "gorelo.io", "claude.ai", "claude.com", "chatgpt.com", "openai.com", "example.invalid",
+ALLOWED_HOSTS = frozenset({"api.usw.gorelo.io", "api.aue.gorelo.io", "gorelo.io", "claude.ai", "claude.com", "example.invalid",
                            "site.local"})  # the start of the file name site.local.toml, not a host; gorelo.io is the domain GORELO_BASE_URL must be under
 HOST_TLDS = "com|io|tech|net|org|dev|ai|app|invalid|local|cloud|co|me|xyz"
 
@@ -191,12 +193,16 @@ def unquote(cell: str) -> str:
 # --------------------------------------------------------------------------
 
 
+# The tools a server registers: create_contract and update_contract are held back (tools._common.HELD_TOOLS) and the document does not count them.
+SPECS = [spec for spec in REGISTRY.specs if not REGISTRY.is_held(spec.name)]
+
+
 def module_of(spec) -> str:
     return spec.fn.__module__.rsplit(".", 1)[-1]
 
 
 def registry_counts() -> dict[str, int]:
-    specs = REGISTRY.specs
+    specs = SPECS
     kinds = Counter(spec.kind for spec in specs)
     return {
         "Tools in the registry": len(specs),
@@ -368,7 +374,7 @@ def test_the_counts_table_equals_the_registry():
 def test_the_toolset_table_equals_the_registry():
     expected = {}
     for toolset in TOOLSETS:
-        specs = [spec for spec in REGISTRY.specs if spec.toolset == toolset]
+        specs = [spec for spec in SPECS if spec.toolset == toolset]
         expected[toolset] = {
             "default": "yes" if toolset in DEFAULT_TOOLSETS else "no",
             "tools": len(specs),
@@ -389,7 +395,7 @@ def test_the_toolset_table_equals_the_registry():
 
 def test_the_tool_module_table_equals_the_registry():
     by_module: dict[str, list] = {}
-    for spec in REGISTRY.specs:
+    for spec in SPECS:
         by_module.setdefault(module_of(spec), []).append(spec)
     expected = {}
     for module, specs in by_module.items():
@@ -406,10 +412,10 @@ def test_the_tool_module_table_equals_the_registry():
 def test_a_tool_count_in_the_prose_is_a_count_the_registry_has():
     allowed = set(registry_counts().values())
     for toolset in TOOLSETS:
-        specs = [spec for spec in REGISTRY.specs if spec.toolset == toolset]
+        specs = [spec for spec in SPECS if spec.toolset == toolset]
         allowed |= {len(specs), sum(1 for spec in specs if spec.kind == "destructive")}
-    for module in {module_of(spec) for spec in REGISTRY.specs}:
-        allowed.add(sum(1 for spec in REGISTRY.specs if module_of(spec) == module))
+    for module in {module_of(spec) for spec in SPECS}:
+        allowed.add(sum(1 for spec in SPECS if module_of(spec) == module))
     quoted = re.findall(r"\b(\d+)\s+(?:regular\s+|gated\s+)?tools?\b", outside_fences(overview()))
     stray = sorted({int(number) for number in quoted if int(number) not in allowed})
     assert stray == [], f"the overview says {stray} tools somewhere; the registry has no such count"
@@ -435,7 +441,7 @@ def test_the_registry_module_list_matches_the_tool_package():
     # tools/__init__.py imports every tool module: a module that registers tools but is not imported there would
     # never register, and the module table above would list tools that do not exist.
     imported = set(re.findall(r"^\s+(\w+),$", (REPO_ROOT / "tools" / "__init__.py").read_text(encoding="utf-8"), re.M))
-    with_tools = {module_of(spec) for spec in REGISTRY.specs}
+    with_tools = {module_of(spec) for spec in SPECS}
     assert with_tools <= imported
 
 
@@ -443,7 +449,7 @@ def test_the_gated_tools_it_lists_are_the_registry_destructive_tools():
     line = next((line for line in overview().splitlines() if line.startswith("Gated tools")), None)
     assert line is not None, "the overview no longer lists the gated tools"
     listed = set(re.findall(r"`([^`]+)`", line.split("): ", 1)[1]))
-    assert listed == {spec.name for spec in REGISTRY.specs if spec.kind == "destructive"}
+    assert listed == {spec.name for spec in SPECS if spec.kind == "destructive"}
 
 
 def test_the_forbidden_operations_and_side_effect_gets_it_lists_are_the_codes():
@@ -457,7 +463,7 @@ def test_the_forbidden_operations_and_side_effect_gets_it_lists_are_the_codes():
 
 
 def test_the_kinds_it_relies_on_are_the_registry_kinds():
-    kinds = {spec.name: spec.kind for spec in REGISTRY.specs}
+    kinds = {spec.name: spec.kind for spec in SPECS}
     relied_on = {
         "health_check": "read",
         "create_invoice": "write",
@@ -490,12 +496,24 @@ def quoted_facts() -> list[tuple[str, str]]:
     """(what, the exact words the document uses for it, built from the constant in the code)."""
     parameters = inspect.signature(GoreloClient.__init__).parameters
     spec = load_spec_index()
+    gateway_statuses = sorted(GATEWAY_RETRY_STATUSES)
     return [
         ("concurrency", f"at most {parameters['max_concurrency'].default} requests in flight"),
         ("timeout", f"a {int(parameters['timeout'].default)} s timeout per request"),
         (
+            "token bucket",
+            f"a burst of {parameters['burst'].default} requests, then {parameters['rate_per_second'].default:g} request per second",
+        ),
+        (
             "429 retries",
-            f"up to {parameters['max_429_retries'].default} times within about {int(parameters['max_429_wait'].default)} s",
+            f"up to {parameters['max_429_retries'].default} times, with at most {int(parameters['max_429_wait'].default)} s "
+            "of `Retry-After` waits (time queued behind other requests is not counted)",
+        ),
+        ("429 back-off ceiling", f"({int(parameters['max_429_wait'].default)} s at most)"),
+        (
+            "gateway retry of a read",
+            f"retried once, after {GATEWAY_RETRY_WAIT:g} seconds, when the gateway answers "
+            f"{', '.join(str(status) for status in gateway_statuses[:-1])} or {gateway_statuses[-1]}",
         ),
         ("page size", f"clamped to {PAGE_SIZE_MIN} to {PAGE_SIZE_MAX}"),
         ("page limit", f"after {MAX_PAGES} pages"),
@@ -568,9 +586,12 @@ def quantities_in_the_code() -> dict[str, set[int]]:
             int(delay.group(1)),
         },
         "s": {int(parameters["timeout"].default), int(parameters["max_429_wait"].default)},
+        "seconds": {int(GATEWAY_RETRY_WAIT)},
         "pages": {MAX_PAGES},
         "times": {parameters["max_429_retries"].default},
         "requests in flight": {parameters["max_concurrency"].default},
+        "requests": {parameters["burst"].default, parameters["max_concurrency"].default},
+        "request per second": {int(parameters["rate_per_second"].default)},
         "wrong passwords": {oauth_guard.FAILURES_PER_IP, oauth_guard.FAILURES_OVERALL},
         "KiB": {oauth_guard.MAX_BODY_BYTES // 1024},
         "addresses": {oauth_guard.MAX_LIMITER_KEYS},
@@ -857,9 +878,9 @@ def test_the_region_and_redirect_settings_it_describes_are_what_settings_parses(
             Settings.from_env({**base, ENV_BASE_URL: bad})
     assert "must be https, on `gorelo.io` or a subdomain of it, with no user name, port, query or fragment" in text
     extra = Settings.from_env({**base, ENV_EXTRA_REDIRECT_DOMAINS: "chatgpt.com, Global.Consent.Azure-APIM.net"})
-    assert list(extra.redirect_domains[:5]) == ["claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost"]  # AulTECH defaults
-    assert list(extra.redirect_domains[5:]) == ["global.consent.azure-apim.net"]
-    assert "added after `claude.ai`, `claude.com`, `chatgpt.com`, `openai.com` and `localhost`" in text and "also admits its subdomains" in text
+    assert list(extra.redirect_domains[:3]) == ["claude.ai", "claude.com", "localhost"]  # added AFTER the built-in ones
+    assert list(extra.redirect_domains[3:]) == ["chatgpt.com", "global.consent.azure-apim.net"]
+    assert "added after `claude.ai`, `claude.com` and `localhost`" in text and "also admits its subdomains" in text
     for bad in ("https://chatgpt.com", "chatgpt.com/path", "chatgpt.com:443", "*.chatgpt.com", "localhost", "203.0.113.7", "chatgpt"):
         with pytest.raises(SettingsError):
             Settings.from_env({**base, ENV_EXTRA_REDIRECT_DOMAINS: bad})
@@ -880,7 +901,7 @@ def test_the_start_lines_it_names_are_logged_by_main_and_the_gated_check_is_the_
 def test_sharing_a_document_is_exposure_and_the_code_keeps_it_apart_from_the_tools_that_write_documents():
     """The safety row 'Sharing is exposure' and the documents module row say: share_document is the only tool that can turn sharing on
     and is gated, unshare_document only turns it off, and update_document has no sharing parameter. Checked against the registry."""
-    specs = {spec.name: spec for spec in REGISTRY.specs}
+    specs = {spec.name: spec for spec in SPECS}
     patch = "PATCH /v1/documents/{documentId}"
     assert specs["share_document"].kind == "destructive" and specs["unshare_document"].kind == "write"
     assert specs["remove_document_related_item"].kind == "destructive"

@@ -21,7 +21,7 @@ and it uses cursor paging. The published text, in short:
   carries the later of the two last updates.
 * A voided invoice is not deleted: GET /v1/invoices still returns it.
 * TypeIds (required): 1 Client, 2 Contact, 3 Contract, 4 Ticket, 5 Item, 6 Invoice, 7 Custom asset, 8 Project,
-  9 Task, 10 Agent asset; up to 10 values, any other value is a 400. Each type needs read access on its own scope (clients Clients,
+  9 Task, 10 Agent asset (added by contract 05200951c89e); up to 10 values, any other value is a 400. Each type needs read access on its own scope (clients Clients,
   contacts Contacts, contracts, items and invoices Billing, tickets Tickets, custom assets Assets, projects and tasks
   Project). Asking for a type the key cannot read is a 403 with code 070208 on TypeIds.
 * Since: an ISO-8601 UTC timestamp, keeps only deletions at or after it. PageSize: 1 to 200 (default 50), out of

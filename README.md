@@ -61,13 +61,15 @@ You run this software at your own risk. It is provided "as is", without warranty
 | `core` | yes | clients and their locations and custom fields, contacts, agent assets and custom assets (get, list, create, update, move), the feed of deleted records, groups and users, alerts, `health_check` |
 | `tickets` | yes | tickets, comments, side conversations, approvals, attachments (`upload_attachment`) |
 | `time` | yes | time entries, billing roles, work types |
-| `billing` | yes | invoices (Drafts), items, categories, taxes, contracts |
+| `billing` | yes | invoices (Drafts), items, categories, taxes, contracts (read only) |
 | `uptime` | yes | uptime checks and maintenance windows |
 | `projects` | no | projects, sections, tasks, comments and approvals; needs the `Project` scope |
 | `forms` | no | forms, responses, submission links; needs the `Forms` scope |
 | `documents` | no | documents: list, read, create, update, move, archive, restore, duplicate, versions, related items and a PDF export; needs the `Documents` scope. `share_document` and `remove_document_related_item` are gated |
 
-[docs/tool-catalog.md](docs/tool-catalog.md) lists every tool. The delete and void tools, `create_approved_invoice`, `share_document` and `remove_document_related_item` are the gated tools: they do not exist unless `GORELO_ENABLE_DESTRUCTIVE` switches them on (`1` for all of them, or a comma list of tool names for just those, such as `delete_time_entry,delete_item`), and every call still needs `confirm=true`. They are off by default; [docs/INSTALL.md](docs/INSTALL.md), step 8.2, shows how to turn them on and back off.
+[docs/tool-catalog.md](docs/tool-catalog.md) lists every tool. The delete and void tools, `create_approved_invoice`, `approve_invoice`, `share_document` and `remove_document_related_item` are the gated tools: they do not exist unless `GORELO_ENABLE_DESTRUCTIVE` switches them on (`1` for all of them, or a comma list of tool names for just those, such as `delete_time_entry,delete_item`), and every call still needs `confirm=true`. They are off by default; [docs/GATED-TOOLS.md](docs/GATED-TOOLS.md) lists all 15 with what each one does and shows how to turn them on and back off ([docs/INSTALL.md](docs/INSTALL.md), step 8.2, too).
+
+Creating and changing contracts (`create_contract` and `update_contract`) is held back since 1.5.1: Gorelo has not released contract writes yet, so those two tools are not registered under any setting, and a `GORELO_ENABLE_DESTRUCTIVE` list that names them is ignored with a warning in the journal. `list_contracts` and `get_contract` work as before.
 
 ## Settings you may need
 
@@ -82,7 +84,7 @@ The full table is in [docs/INSTALL.md](docs/INSTALL.md), step 3. Besides the API
 
 ## Regions
 
-Your Gorelo account is hosted in one region. Set `GORELO_BASE_URL` to the host of that region, in `.env` and, if you use the daily watcher, in its own environment file. After you start the service, read the start line in the journal, `gorelo-mcp settings: api_host=<host>`: the host it names is the one the server calls, and it must be the host of your region. [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) has the steps if a key is rejected or that host is not the host of your region.
+Your Gorelo account is hosted in one region. Set `GORELO_BASE_URL` to the host of that region, in `.env` and, if you use the daily watcher, in its own environment file. After you start the service, read the start line in the journal, `gorelo-mcp settings: api_host=<host>`: the host it names is the one the server calls, and it must be the host of your region. [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) has the steps for a rejected key and for a start line that names another host.
 
 ## Connecting other clients
 

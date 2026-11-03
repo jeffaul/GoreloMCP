@@ -39,6 +39,17 @@ names, never the text of a record):
                    %PDF; the note holds its size), list_document_versions and get_document_version of the first (newest)
                    version (its key is VersionId, not Id) and list_document_related_items. A document list that came back empty
                    skips the single-record rows, like the other lists. Nothing is ever written
+    1.4.0 reads       (contract 05200951c89e) list_agent_apps, get_agent_hardware, list_agent_patches and
+                   list_agent_tags of the first listed agent, list_agent_available_updates of the first listed Windows agent (Os says
+                   Windows; none listed, or a 400 naming DeviceId: the row is skipped), list_asset_types, list_scripts and get_script of the first listed script
+                   (counts and ids only: the Content of a script is never printed)
+    1.5.0 reads       (contract 6c30770dffc0) list_ticket_priorities and list_ticket_sources are NETWORK reads now (GET /v1/tickets/priorities
+                   and /sources, no longer served locally), list_org_roles, get_org_group and get_org_user of the first listed group and
+                   user, get_alert of the first listed alert, list_policies and get_policy, list_asset_tags, list_client_types,
+                   list_client_custom_fields, list_contact_tags, list_project_templates (scope Project), get_client_location of the first
+                   location of the TEST CLIENT, list_payments and get_payment, list_product_charges and get_product_charge, and the
+                   structured documents of the Documents scope (list_structured_documents, get_structured_document, its submissions
+                   and the first submission). Each single read uses the first id its list taught; an empty list skips it
     others         get_custom_asset (the first listed custom asset) and list_deletions (types 1 Client and 2 Contact only: a key
                    without the scope of a type gets a 403 for the whole call)
     test client    its status has a row of its own: the check of the site clients that runs first reads each configured client
@@ -266,6 +277,16 @@ def check_list(result: Mapping[str, Any], *, nonempty: bool = False) -> str:
     if nonempty and not items:
         raise ShapeError("no rows (this list is never empty in a working tenant)")
     return f"count={len(items)}"
+
+
+def check_object(result: Mapping[str, Any], *, items: bool = False) -> str:
+    """An answer that is one object ({LastScannedOn, Items} and kin, as Gorelo sent it); `items` also wants an Items list.
+    Counts only: the apps, patches and hardware of a device are never printed."""
+    if not isinstance(result, Mapping) or not result:
+        raise ShapeError("the answer is not a non-empty object")
+    if items:
+        return f"Items={_count(result, 'Items')}"
+    return f"keys={len(result)}"
 
 
 def check_paged(result: Mapping[str, Any], *, nonempty: bool = False) -> str:
@@ -516,6 +537,16 @@ def _first_id(result: Mapping[str, Any]) -> Any:
     return first.get("Id") if isinstance(first, dict) else None
 
 
+def _pick_windows_agent(result: Mapping[str, Any]) -> Any:
+    """The Id of the first listed agent whose Os, OsType or OsName says Windows (the updates read answers 400 DeviceId for others)."""
+    for row in result.get("items", []):
+        if isinstance(row, dict) and any(
+            isinstance(row.get(key), str) and "windows" in row[key].casefold() for key in ("Os", "OsType", "OsName")
+        ):
+            return row.get("Id")
+    return None
+
+
 def _pick_ticket(result: Mapping[str, Any]) -> Any:
     """The ticket to explore: the first row, unless a row's last update was a comment (more to read there)."""
     rows = [
@@ -580,14 +611,16 @@ class Case:
     """One smoke call.
 
     tool      the read tool to call (a registry name)
-    shape     what the answer must look like: health, paged, list, all, search, record or local (no HTTP at all)
+    shape     what the answer must look like: health, paged, list, all, search, record, object or file
     args      builds the arguments from what was found so far; raises Skip when something is missing
     label     the row name when it is not the tool name (get_ticket is called three times)
     provides  the Found keys this case teaches; pick(result) returns the value (None: the list was empty)
     same_id   for a record: the Found key whose value the record's Id must equal ("ticket" compares ticket["Id"])
     id_key    for a record: the key that holds its id ("Id", or "VersionId" for a document version)
     extra     a further check of the answer: it returns text for the end of the row's note ("" for none) or raises ShapeError
-    shape     also "file": the answer is a file (export_document_pdf), checked by check_file
+    also, also_pick   a second Found key taught by the same answer (the first row also_pick finds), e.g. a Windows agent
+    skip_on_400       a 400 answer that names this text makes the row SKIPPED, not FAILED
+    shape     also "object" (one object as Gorelo sent it; nonempty also wants an Items list) and "file": the answer is a file (export_document_pdf), checked by check_file
     """
 
     tool: str
@@ -601,6 +634,9 @@ class Case:
     nonempty: bool = False
     complete: bool = False
     extra: Callable[[Mapping[str, Any]], str] | None = None
+    also: str | None = None  # a second Found key the same answer teaches, chosen by also_pick
+    also_pick: Callable[[Mapping[str, Any]], Any] = _first_id
+    skip_on_400: str | None = None  # a 400 answer naming this text is SKIPPED, not FAILED (the call does not apply to this record)
 
     @property
     def row(self) -> str:
@@ -629,18 +665,59 @@ CASES: tuple[Case, ...] = (
         extra=custom_properties_of_test_client_note,
     ),
     Case("list_client_locations", "list", args=_by("client", "a client", "client_id"), nonempty=True),
+    Case(
+        "list_client_locations",
+        "list",
+        label="list_client_locations (test client)",
+        args=_by("test_client", "the test client", "client_id"),
+        provides="test_location",
+    ),
+    Case(
+        "get_client_location",
+        "record",
+        args=lambda found: {
+            "client_id": found.need("test_client", "the test client"),
+            "location_id": found.need("test_location", "a location of the test client"),
+        },
+        same_id="test_location",
+    ),
+    Case("list_client_types", "list"),
+    Case("list_client_custom_fields", "list"),
     Case("list_contacts", "paged", args=lambda found: {"page_size": 20}, provides="contact"),
     Case("get_contact", "record", args=_by("contact", "a contact", "contact_id"), same_id="contact"),
-    Case("list_org_groups", "list", nonempty=True),
-    Case("list_org_users", "all", nonempty=True, complete=True),
+    Case("list_contact_tags", "list"),
+    Case("list_org_groups", "list", nonempty=True, provides="org_group"),
+    Case("get_org_group", "record", args=_by("org_group", "an organization group", "group_id"), same_id="org_group"),
+    Case("list_org_users", "all", nonempty=True, complete=True, provides="org_user"),
+    Case("get_org_user", "record", args=_by("org_user", "an organization user", "user_id"), same_id="org_user"),
+    Case("list_org_roles", "list"),
     Case(
         "list_agents",
         "paged",
-        args=lambda found: {"page_size": 10},
+        args=lambda found: {"page_size": 50},
         provides="agent",
+        also="windows_agent",
+        also_pick=_pick_windows_agent,
         extra=rows_without_custom_properties_note,
     ),
     Case("get_agent", "record", args=_by("agent", "an agent", "agent_id"), same_id="agent", extra=custom_properties_note),
+    # 1.4.0 (contract 05200951c89e): the per-agent reads of the first listed agent, answers shown as counts only
+    Case("list_agent_apps", "object", args=_by("agent", "an agent", "agent_id"), nonempty=True),
+    Case("get_agent_hardware", "object", args=_by("agent", "an agent", "agent_id")),
+    Case("list_agent_patches", "object", args=_by("agent", "an agent", "agent_id"), nonempty=True),
+    # Windows agents only: a macOS agent answers 400 naming DeviceId, so no Windows agent listed (or that 400) skips the row;
+    # an agent that is up to date answers an empty list, so nonempty is not asked
+    Case(
+        "list_agent_available_updates",
+        "object",
+        args=_by("windows_agent", "a Windows agent", "agent_id"),
+        skip_on_400="DeviceId",
+    ),
+    Case("list_agent_tags", "list", args=_by("agent", "an agent", "agent_id")),
+    Case("list_asset_types", "list", nonempty=True),
+    Case("list_asset_tags", "list"),
+    Case("list_policies", "paged", args=lambda found: {"page_size": 20}, provides="policy"),
+    Case("get_policy", "record", args=_by("policy", "a policy", "policy_id"), same_id="policy"),
     Case("list_custom_assets", "paged", args=lambda found: {"page_size": 10}, provides="custom_asset"),
     Case(
         "get_custom_asset",
@@ -649,16 +726,19 @@ CASES: tuple[Case, ...] = (
         same_id="custom_asset",
     ),
     Case("list_custom_asset_hardware_types", "list"),
-    Case("list_alerts", "paged", args=lambda found: {"page_size": 20}),
+    Case("list_alerts", "paged", args=lambda found: {"page_size": 20}, provides="alert"),
+    Case("get_alert", "record", args=_by("alert", "an alert", "alert_id"), same_id="alert"),
     # types 1 Client and 2 Contact only: a key without the scope of a type gets a 403 for the whole call, and nothing says that
     # a tenant has deletions, so the answer may be empty
     Case("list_deletions", "paged", args=lambda found: {"type_ids": [1, 2], "page_size": 20}),
+    Case("list_scripts", "paged", args=lambda found: {"page_size": 20}, provides="script"),
+    Case("get_script", "record", args=_by("script", "a script", "script_id"), same_id="script"),
     # tickets
     Case("list_ticket_statuses", "list", nonempty=True),
     Case("list_ticket_types", "list", nonempty=True),
     Case("list_ticket_tags", "list"),
-    Case("list_ticket_priorities", "local", nonempty=True),
-    Case("list_ticket_sources", "local", nonempty=True),
+    Case("list_ticket_priorities", "list", nonempty=True),
+    Case("list_ticket_sources", "list", nonempty=True),
     Case("list_tickets", "paged", args=lambda found: {"page_size": 50}, provides="ticket", pick=_pick_ticket),
     Case("search_tickets", "search", args=_search_args),
     Case("get_ticket", "record", label="get_ticket (guid)", args=_ticket_guid, same_id="ticket"),
@@ -691,6 +771,15 @@ CASES: tuple[Case, ...] = (
     # billing
     Case("list_contracts", "paged", args=lambda found: {"page_size": 20}, provides="contract"),
     Case("get_contract", "record", args=_by("contract", "a contract", "contract_id"), same_id="contract"),
+    Case("list_payments", "paged", args=lambda found: {"page_size": 20}, provides="payment"),
+    Case("get_payment", "record", args=_by("payment", "a payment", "payment_id"), same_id="payment"),
+    Case("list_product_charges", "paged", args=lambda found: {"page_size": 20}, provides="product_charge"),
+    Case(
+        "get_product_charge",
+        "record",
+        args=_by("product_charge", "a product charge", "product_charge_id"),
+        same_id="product_charge",
+    ),
     Case("list_invoices", "paged", args=lambda found: {"page_size": 20}, provides="invoice"),
     Case("get_invoice", "record", args=_by("invoice", "an invoice", "invoice_id"), same_id="invoice"),
     Case("list_items", "paged", args=lambda found: {"page_size": 20}, provides="item"),
@@ -705,6 +794,7 @@ CASES: tuple[Case, ...] = (
     Case("get_project", "record", args=_by("project", "a project", "project_id"), same_id="project"),
     Case("list_project_tags", "list"),
     Case("list_project_types", "list"),
+    Case("list_project_templates", "paged", args=lambda found: {"page_size": 20}),
     Case("list_project_sections", "list", args=_by("project", "a project", "project_id")),
     Case(
         "list_project_tasks",
@@ -770,6 +860,31 @@ CASES: tuple[Case, ...] = (
         id_key="VersionId",
     ),
     Case("list_document_related_items", "list", args=_by("document", "a document", "document_id")),
+    Case("list_structured_documents", "paged", args=lambda found: {"page_size": 20}, provides="structured_document"),
+    Case(
+        "get_structured_document",
+        "record",
+        args=_by("structured_document", "a structured document", "structured_document_id"),
+        same_id="structured_document",
+    ),
+    Case(
+        "list_structured_document_submissions",
+        "paged",
+        args=lambda found: {
+            "structured_document_id": found.need("structured_document", "a structured document"),
+            "page_size": 20,
+        },
+        provides="structured_submission",
+    ),
+    Case(
+        "get_structured_document_submission",
+        "record",
+        args=lambda found: {
+            "structured_document_id": found.need("structured_document", "a structured document"),
+            "submission_id": found.need("structured_submission", "a structured document submission"),
+        },
+        same_id="structured_submission",
+    ),
 )
 
 
@@ -784,10 +899,12 @@ def _validate_shape(case: Case, found: Found, result: Mapping[str, Any]) -> str:
     shape = case.shape
     if shape == "health":
         return check_health(result)
-    if shape in ("list", "local"):
+    if shape == "list":
         return check_list(result, nonempty=case.nonempty)
     if shape == "paged":
         return check_paged(result, nonempty=case.nonempty)
+    if shape == "object":
+        return check_object(result, items=case.nonempty)
     if shape == "all":
         return check_all(result, nonempty=case.nonempty, complete=case.complete)
     if shape == "search":
@@ -912,6 +1029,12 @@ class _Smoke:
     def _teach(self, case: Case, outcome: str, result: Mapping[str, Any] | None, reason: str | None = None) -> None:
         if case.provides is None:
             return
+        if case.also is not None:
+            extra = case.also_pick(result) if result is not None else None
+            if extra is not None:
+                self.found.values[case.also] = extra
+            else:
+                self.found.why[case.also] = reason or f"no {case.tool} row reports Windows in Os, OsType or OsName"
         value = case.pick(result) if result is not None else None
         if value is not None:
             self.found.values[case.provides] = value
@@ -951,6 +1074,9 @@ class _Smoke:
             if exc.scope is not None and self.reads.get(case.tool) in SCOPE_TOOLSETS:
                 self.add(Row(case.row, SCOPE_MISSING, f"{exc.scope} scope"))
                 self._teach(case, SCOPE_MISSING, None)
+            elif case.skip_on_400 and exc.status == 400 and case.skip_on_400 in exc.text:
+                self.add(Row(case.row, SKIPPED, f"Gorelo answered 400 naming {case.skip_on_400}: {exc.detail}"[:_NOTE_LIMIT]))
+                self._teach(case, SKIPPED, None)
             else:
                 self.add(Row(case.row, FAILED, exc.text[:_NOTE_LIMIT]))
                 self._teach(case, FAILED, None)

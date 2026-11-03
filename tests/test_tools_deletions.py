@@ -160,6 +160,7 @@ def test_the_type_table_and_the_texts_are_the_ones_in_the_spec():
     op = spec["paths"]["/v1/deletions"]["get"]
     params = {p["name"]: flat(p["description"]) for p in op["parameters"]}
     types = {int(n): name.strip() for n, name in re.findall(r"(\d+) ([A-Z][A-Za-z ]*?)(?=,|\.)", params["TypeIds"])}
+    # contract 05200951c89e added type 10 Agent asset to the text
     assert types == deletions_module.DELETION_TYPES
     assert params["TypeIds"].startswith("Required.") and "Up to 10 values; any other value is a 400." in params["TypeIds"]
     assert "ISO-8601 UTC timestamp; keeps only deletions at or after it." in params["Since"]
@@ -389,7 +390,7 @@ LOCAL_ERRORS = [
     pytest.param({"type_ids": "1,2"}, "type_ids: expected a list of type ids such as [1, 4], got a string", id="type-ids-text"),
     pytest.param({"type_ids": 4}, "type_ids: expected a list of type ids such as [1, 4], got a number", id="type-ids-number"),
     pytest.param({"type_ids": [0]}, f"type_ids[0]: 0 is not a record type; valid ids: {TYPE_HELP}", id="type-0"),
-    pytest.param({"type_ids": [1, 11]}, "type_ids[1]: 11 is not a record type; valid ids: 1 Client", id="type-10"),
+    pytest.param({"type_ids": [1, 11]}, "type_ids[1]: 11 is not a record type; valid ids: 1 Client", id="type-11"),
     pytest.param({"type_ids": [-1]}, "type_ids[0]: -1 is not a record type", id="negative-type"),
     pytest.param({"type_ids": [2**63]}, "type_ids[0]: 9223372036854775808 is not a record type", id="huge-type"),
     pytest.param({"type_ids": [True]}, "type_ids[0]: a boolean is not a record type", id="bool-type"),

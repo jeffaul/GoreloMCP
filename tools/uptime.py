@@ -98,7 +98,7 @@ FILTER_FIELDS = {
 }
 LIST_FIELD_MAP = {**FILTER_FIELDS, "page_size": "PageSize", "cursor": "Cursor"}
 
-# Body fields that CreateUptimeCommand and UpdateUptimeCommand share.
+# Body fields that CreateUptimeCommand and UpdateUptimeCommand share (named *UptimeCheck* before contract 05200951c89e).
 CHECK_BODY = {
     "check_type": "TypeId",
     "frequency_minutes": "Frequency",
@@ -551,11 +551,11 @@ async def set_uptime_maintenance(
             "until you end it."
         ),
     ] = None,
-    reason: Annotated[str | None, Field(description="Required with enabled=true: why the check is in maintenance. Omit with enabled=false.")] = None,
+    reason: Annotated[str | None, Field(description="Why the check is in maintenance.")] = None,
 ) -> dict:
     """Start or end a maintenance window on an uptime check and return it. enabled=false ends it and takes
-    no other field; with enabled=true start, duration_minutes and reason are required (0 means the window never
-    expires). Pass the current time as start only if the user wants maintenance now.
+    no other field; with enabled=true start and duration_minutes are required (0 means the window never
+    expires) and reason is optional. Pass the current time as start only if the user wants maintenance now.
     Side effects: while a window is active the check's failures stop raising alerts, and one with no
     expiry (duration 0) hides outages until it is ended. A failed re-read returns {Id, warning}: the
     change WAS applied, do not repeat it.
@@ -592,8 +592,6 @@ async def set_uptime_maintenance(
                 "enabled=false)"
             )
         raise ValueError("; ".join(missing))
-    if enabled and reason is None:
-        raise ValueError("reason: required when enabled=true; give the reason for this maintenance window")
     body = build_body(
         {
             "enabled": enabled,

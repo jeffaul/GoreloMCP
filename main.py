@@ -21,14 +21,14 @@ from dotenv import load_dotenv
 from oauth_guard import GateError
 from oauth_store import StateFileError
 from personal_auth import PersonalAuthProvider
-from server import build_server, install_log_value_filter, resolve_gated_tools
+from server import build_server, install_log_value_filter, resolve_gated_tools, warn_held_tools
 from settings import Settings, SettingsError
 
 # The directory this file lives in. In production that is /opt/gorelo-mcp/app, which is also the
 # systemd WorkingDirectory, so the OAuth state stays in the same ./.oauth-state it always used
 # (PersonalAuthProvider's default was the relative path ".oauth-state").
 APP_DIR = Path(__file__).resolve().parent
-HOST = os.environ.get("MCP_BIND_HOST", "127.0.0.1")
+HOST = "127.0.0.1"
 PORT = 8765
 
 logger = logging.getLogger("gorelo-mcp")
@@ -50,6 +50,7 @@ def main() -> None:
     extra = ",".join(settings.extra_redirect_domains) or "none"  # host names only, never a secret
     logger.info("gorelo-mcp settings: api_host=%s extra_redirect_domains=%s", settings.api_host, extra)
     logger.info("gorelo-mcp gated tools: %s", ",".join(gated) or "none")  # names only; the ready line below keeps its shape
+    warn_held_tools(settings)  # a held tool named in GORELO_ENABLE_DESTRUCTIVE is dropped with one warning, not an error
     try:
         auth = PersonalAuthProvider(
             base_url=settings.public_base_url,
@@ -58,7 +59,7 @@ def main() -> None:
             state_dir=str(APP_DIR / ".oauth-state"),
         )
         # The gate also checks its routes when the HTTP app is built, which happens inside run().
-        build_server(settings, auth=auth).run(transport="http", host=HOST, port=PORT)
+        build_server(settings, auth=auth).run(transport="http", host=os.environ.get("MCP_BIND_HOST", HOST), port=PORT)
     except (StateFileError, GateError) as exc:
         logger.error("%s; refusing to start", exc)
         sys.exit(1)

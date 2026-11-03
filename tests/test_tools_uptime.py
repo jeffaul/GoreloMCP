@@ -219,9 +219,9 @@ def test_the_docstrings_state_the_facts_the_model_must_know():
     maintenance = " ".join(inspect.getdoc(uptime.set_uptime_maintenance).split())
     assert "enabled=false ends it and takes no other field" in maintenance
     # a window needs its length (0 means it never expires); live 2026-10-02: Gorelo also refuses a window
-    # without a start; the October 23 contract also requires a reason
-    assert "with enabled=true start, duration_minutes and reason are required (0 means the window never expires)" in maintenance
-    assert "reason is optional" not in maintenance
+    # without a start, so only the reason stays optional
+    assert "with enabled=true start and duration_minutes are required (0 means the window never expires)" in maintenance
+    assert "and reason is optional" in maintenance
     assert "Pass the current time as start only if the user wants maintenance now" in maintenance
     assert "start and reason are optional" not in maintenance and "start, duration_minutes and reason are optional" not in maintenance
     assert "the check's failures stop raising alerts" in maintenance and "one with no expiry (duration 0) hides outages" in maintenance
@@ -1031,7 +1031,9 @@ async def test_a_failed_read_before_a_target_change_sends_no_patch(server, mock_
     mock_gorelo.on("GET", CHECK_PATH, failure)
     text = await call_tool_error(server, "update_uptime_check", {"check_id": CHECK_ID, "port": 8443})
     assert expected in text
-    assert mock_gorelo.calls("PATCH") == [] and len(mock_gorelo.calls("GET")) == 1  # nothing written, nothing retried
+    # nothing written; the read is asked once more only after a refused connection (1.4.2)
+    assert mock_gorelo.calls("PATCH") == []
+    assert len(mock_gorelo.calls("GET")) == (2 if isinstance(failure, httpx.ConnectError) else 1)
 
 
 @pytest.mark.parametrize(
@@ -1412,12 +1414,14 @@ async def test_beginning_a_window_without_a_start_or_a_duration_names_both(serve
 
 
 @pytest.mark.parametrize("minutes", [0, 1, 90, 2**31 - 1])
-async def test_a_window_with_any_duration_from_zero_up_sends_the_required_reason(server, mock_gorelo, minutes):
+async def test_a_window_with_any_duration_from_zero_up_is_sent_and_only_the_reason_stays_optional(server, mock_gorelo, minutes):
     route_update(mock_gorelo)
-    await call_tool(server, "set_uptime_maintenance", {"check_id": CHECK_ID, "enabled": True, "start": START, "duration_minutes": minutes, "reason": "Patching"})
+    await call_tool(server, "set_uptime_maintenance", {"check_id": CHECK_ID, "enabled": True, "start": START, "duration_minutes": minutes})
     assert mock_gorelo.requests[0].json == {
-        "MaintenanceMode": {"Enabled": True, "StartDateTime": START, "DurationInMinutes": minutes, "Reason": "Patching"}
+        "MaintenanceMode": {"Enabled": True, "StartDateTime": START, "DurationInMinutes": minutes}
     }
+    assert "Reason" not in mock_gorelo.requests[0].json["MaintenanceMode"]  # nothing is invented for the reason
+
 
 async def test_the_start_and_duration_rules_leave_the_schema_alone_because_ending_a_window_needs_neither(server):
     # the requirement depends on enabled, which a JSON schema cannot say: the schema keeps only the always-needed pair
@@ -1432,21 +1436,22 @@ async def test_ending_a_window_still_refuses_a_duration_even_zero(server, mock_g
     assert mock_gorelo.requests == []
 
 
-@pytest.mark.parametrize("reason", [None])
-async def test_a_window_without_a_reason_is_refused_before_http(server, mock_gorelo, reason):
-    text = await call_tool_error(server, "set_uptime_maintenance", {"check_id": CHECK_ID, "enabled": True, "start": START, "duration_minutes": 30, "reason": reason})
-    assert text == "reason: required when enabled=true; give the reason for this maintenance window"
-    assert mock_gorelo.requests == []
+async def test_a_window_without_a_reason_sends_none(server, mock_gorelo):
+    route_update(mock_gorelo)
+    await call_tool(server, "set_uptime_maintenance", {"check_id": CHECK_ID, "enabled": True, "start": START, "duration_minutes": 30})
+    assert mock_gorelo.requests[0].json == {
+        "MaintenanceMode": {"Enabled": True, "StartDateTime": START, "DurationInMinutes": 30}
+    }
 
 
 async def test_only_the_maintenance_params_that_are_given_are_sent(server, mock_gorelo):
     route_update(mock_gorelo)
     await call_tool(
         server, "set_uptime_maintenance",
-        {"check_id": CHECK_ID, "enabled": True, "duration_minutes": 15, "start": "2026-10-02T22:00:00Z", "reason": "Patching"},
-    )  # all three enabling fields are required
+        {"check_id": CHECK_ID, "enabled": True, "duration_minutes": 15, "start": "2026-10-02T22:00:00Z"},
+    )  # start and duration are required; the reason is the only optional field and is not invented
     assert mock_gorelo.requests[0].json == {
-        "MaintenanceMode": {"Enabled": True, "StartDateTime": "2026-10-02T22:00:00Z", "DurationInMinutes": 15, "Reason": "Patching"}
+        "MaintenanceMode": {"Enabled": True, "StartDateTime": "2026-10-02T22:00:00Z", "DurationInMinutes": 15}
     }
 
 
@@ -1542,6 +1547,7 @@ async def test_the_maintenance_body_never_carries_anything_but_maintenance_mode(
     route_update(mock_gorelo)
     for args in (
         {"enabled": False},
+        {"enabled": True, "start": START, "duration_minutes": 0},
         {"enabled": True, "start": START, "duration_minutes": 0, "reason": "r"},
         {"enabled": True, "duration_minutes": 5, "reason": "r", "start": "2026-10-02T22:00:00Z"},
     ):

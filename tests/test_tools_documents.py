@@ -229,6 +229,22 @@ async def test_every_filter_goes_out_under_its_spec_name(server, mock_gorelo):
     assert result["page_size"] == 25
 
 
+async def test_list_documents_sends_document_order_as_sort_by(server, mock_gorelo):
+    mock_gorelo.on("GET", DOCS, paged_envelope([]))
+    result = await call_tool(server, "list_documents", {"parent_document_id": PARENT, "sort_by": "documentOrder", "sort_order": "asc"})
+    assert mock_gorelo.last.query["SortBy"] == "documentOrder" and mock_gorelo.last.query["SortOrder"] == "asc"
+    assert result["filters"]["sort_by"] == "documentOrder"
+    await call_tool(server, "list_documents", {"sort_by": "documentOrder"})  # not refused without a parent, only documented
+    assert mock_gorelo.last.query["SortBy"] == "documentOrder"
+
+
+async def test_list_documents_still_refuses_an_unknown_sort_by(server, mock_gorelo):
+    mock_gorelo.on("GET", DOCS, paged_envelope([]))
+    text = await call_tool_error(server, "list_documents", {"sort_by": "documentorder"})
+    assert "sort_by" in text
+    assert mock_gorelo.requests == []
+
+
 async def test_the_echoed_filters_can_be_sent_back_unchanged_for_the_next_page(server, mock_gorelo):
     mock_gorelo.on("GET", DOCS, paged_envelope([]))
     first = await call_tool(server, "list_documents", {"status_ids": [2], "created_since": "2026-09-01T08:00:00+02:00"})
@@ -406,12 +422,19 @@ async def test_get_document_refuses_an_answer_that_is_not_a_document(server, moc
     assert text.startswith("Gorelo returned an unexpected response for get_document")
 
 
-@pytest.mark.parametrize("failure", [httpx.ReadTimeout("slow"), httpx.ConnectError("refused")])
-async def test_a_read_that_times_out_says_retrying_is_safe(server, mock_gorelo, failure):
+# A refused connection is a read's one retry (1.4.2), so it is asked twice; a timeout is never retried.
+READ_FAILURES = [
+    pytest.param(httpx.ReadTimeout("slow"), 1, id="timeout"),
+    pytest.param(httpx.ConnectError("refused"), 2, id="connection"),
+]
+
+
+@pytest.mark.parametrize("failure, reads", READ_FAILURES)
+async def test_a_read_that_times_out_says_retrying_is_safe(server, mock_gorelo, failure, reads):
     mock_gorelo.on("GET", DOC_PATH, failure)
     text = await call_tool_error(server, "get_document", {"document_id": DOC})
     assert text.startswith("Gorelo did not answer get_document") and "This was a read, so retrying is safe." in text
-    assert len(mock_gorelo.requests) == 1
+    assert len(mock_gorelo.requests) == reads
 
 
 # --------------------------------------------------------------------------
@@ -500,12 +523,13 @@ async def test_a_pdf_error_names_document_id(server, mock_gorelo):
     assert text == f"Gorelo rejected export_document_pdf (HTTP 404, code 070401): document_id: Document not found. [trace {TEST_TRACE_ID}]"
 
 
-@pytest.mark.parametrize("failure", [httpx.ReadTimeout("slow"), httpx.ConnectError("refused")])
-async def test_a_pdf_timeout_is_a_read_so_retrying_is_safe(server, mock_gorelo, failure):
+@pytest.mark.parametrize("failure, reads", READ_FAILURES)
+async def test_a_pdf_timeout_is_a_read_so_retrying_is_safe(server, mock_gorelo, failure, reads):
+    # the document PDF is a plain read (no export event), so a refused connection is asked once more like any read
     mock_gorelo.on("GET", PDF_PATH, failure)
     text = await call_tool_error(server, "export_document_pdf", {"document_id": DOC})
     assert text.startswith("Gorelo did not answer export_document_pdf") and "This was a read, so retrying is safe." in text
-    assert "export event" not in text and len(mock_gorelo.requests) == 1
+    assert "export event" not in text and len(mock_gorelo.requests) == reads
 
 
 def test_pdf_names_helper_keeps_a_safe_stem():
@@ -1996,16 +2020,17 @@ async def test_a_timeout_restoring_is_not_retried_and_the_version_list_is_not_re
 
 
 @pytest.mark.parametrize(
-    "failure, why",
+    "failure, why, reads",
     [
-        pytest.param(httpx.ReadTimeout("slow"), "the read timed out", id="timeout"),
-        pytest.param(httpx.ConnectError("refused"), "the connection failed", id="connection"),
-        pytest.param(error_envelope(500, [("070500", "Boom")]), "HTTP 500", id="http-500"),
-        pytest.param(envelope({"VersionId": OLD_VERSION}), "its answer could not be used (HTTP 200)", id="unusable-200"),
-        pytest.param(error_envelope(200, [("070500", "Boom")]), "Gorelo reported a failure (HTTP 200)", id="failure-in-200"),
+        pytest.param(httpx.ReadTimeout("slow"), "the read timed out", 1, id="timeout"),
+        # the version list is a read: a refused connection is asked once more (1.4.2), the POST is still sent once
+        pytest.param(httpx.ConnectError("refused"), "the connection failed", 2, id="connection"),
+        pytest.param(error_envelope(500, [("070500", "Boom")]), "HTTP 500", 1, id="http-500"),
+        pytest.param(envelope({"VersionId": OLD_VERSION}), "its answer could not be used (HTTP 200)", 1, id="unusable-200"),
+        pytest.param(error_envelope(200, [("070500", "Boom")]), "Gorelo reported a failure (HTTP 200)", 1, id="failure-in-200"),
     ],
 )
-async def test_a_version_list_that_fails_after_the_restore_is_reported_as_an_error_not_a_success(server, mock_gorelo, failure, why):
+async def test_a_version_list_that_fails_after_the_restore_is_reported_as_an_error_not_a_success(server, mock_gorelo, failure, why, reads):
     mock_gorelo.on("POST", RESTORE_PATH, envelope(detail()))
     mock_gorelo.on("GET", VERSIONS_PATH, failure)
     text = await call_tool_error(server, "restore_document_version", {"document_id": DOC, "version_id": OLD_VERSION})
@@ -2016,7 +2041,7 @@ async def test_a_version_list_that_fails_after_the_restore_is_reported_as_an_err
         "before repeating it (list_document_versions; repeating the restore is safe, restoring the current version changes nothing)"
     )
     assert "This was a read" not in text and "Gorelo rejected restore_document_version" not in text
-    assert [r.method for r in mock_gorelo.requests] == ["POST", "GET"]
+    assert [r.method for r in mock_gorelo.requests] == ["POST"] + ["GET"] * reads
 
 
 async def test_a_failed_confirmation_read_raises_a_write_unconfirmed_error_chained_to_the_read_error(client_factory, mock_gorelo):
@@ -2071,6 +2096,27 @@ async def test_list_document_related_items_maps_a_404_to_document_id(server, moc
     mock_gorelo.on("GET", RELATED_PATH, error_envelope(404, [("070401", "Document not found.", "documentId")]))
     text = await call_tool_error(server, "list_document_related_items", {"document_id": DOC})
     assert text == f"Gorelo rejected list_document_related_items (HTTP 404, code 070401): document_id: Document not found. [trace {TEST_TRACE_ID}]"
+
+
+@pytest.mark.parametrize("name", ["agent_asset", "device"])
+async def test_add_related_items_sends_item_type_4_for_agent_asset_and_its_older_name_device(server, mock_gorelo, name):
+    asset = uid(52)
+    answer = linked((4, "Agent asset", asset))
+    mock_gorelo.on("POST", RELATED_PATH, envelope(answer))
+    mock_gorelo.on("GET", RELATED_PATH, envelope(answer))
+    result = await call_tool(
+        server, "add_document_related_items",
+        {"document_id": DOC, "related_items": [{"item_type": name, "item_id": asset.replace("-", "").upper()}]},
+    )
+    assert mock_gorelo.requests[0].json == {"RelatedItems": [{"ItemId": asset, "ItemTypeId": 4}]}
+    assert result["items"] == answer and result["count"] == 1
+
+
+@pytest.mark.parametrize("name", ["agent_asset", "device"])
+async def test_add_related_items_checks_that_an_agent_asset_id_is_a_guid(server, mock_gorelo, name):
+    text = await call_tool_error(server, "add_document_related_items", {"document_id": DOC, "related_items": [{"item_type": name, "item_id": "abc"}]})
+    assert "related_items[0].item_id: expected a GUID such as" in text
+    assert mock_gorelo.requests == []
 
 
 async def test_add_related_items_sends_each_type_in_its_wire_form(server, mock_gorelo):
@@ -2331,6 +2377,19 @@ EXPECTED_TOOLS = {
     "list_document_versions": ("read", ["GET /v1/documents/{documentId}/versions"], False),
     "get_document_version": ("read", ["GET /v1/documents/{documentId}/versions/{versionId}"], False),
     "list_document_related_items": ("read", ["GET /v1/documents/{documentId}/related-items"], False),
+    # the structured document reads (tests/test_tools_structured_documents.py checks their texts and parameters)
+    "list_structured_documents": ("read", ["GET /v1/documents/structured"], False),
+    "get_structured_document": ("read", ["GET /v1/documents/structured/{structuredDocumentId}"], False),
+    "list_structured_document_submissions": (
+        "read",
+        ["GET /v1/documents/structured/{structuredDocumentId}/submissions"],
+        False,
+    ),
+    "get_structured_document_submission": (
+        "read",
+        ["GET /v1/documents/structured/{structuredDocumentId}/submissions/{submissionId}"],
+        False,
+    ),
     "create_document": ("write", ["POST /v1/documents"], False),
     "update_document": ("write", ["GET /v1/documents/{documentId}", "PATCH /v1/documents/{documentId}"], True),
     "move_document": ("write", ["PATCH /v1/documents/{documentId}"], True),
@@ -2369,6 +2428,10 @@ DOCUMENT_OPS = {
     "GET /v1/documents/{documentId}/versions",
     "GET /v1/documents/{documentId}/versions/{versionId}",
     "POST /v1/documents/{documentId}/versions/{versionId}/restore",
+    "GET /v1/documents/structured",
+    "GET /v1/documents/structured/{structuredDocumentId}",
+    "GET /v1/documents/structured/{structuredDocumentId}/submissions",
+    "GET /v1/documents/structured/{structuredDocumentId}/submissions/{submissionId}",
 }
 
 
@@ -2378,7 +2441,7 @@ def test_the_module_declares_exactly_these_tools():
     assert {spec.toolset for spec in module_specs()} == {"documents"}
 
 
-def test_the_twelve_document_operations_are_all_used_and_all_exist(spec_index):
+def test_the_document_operations_are_all_used_and_all_exist(spec_index):
     used = {op for spec in module_specs() for op in spec.ops}
     assert used == DOCUMENT_OPS
     assert all(op in spec_index.ops for op in used)
@@ -2470,10 +2533,10 @@ async def test_no_document_tool_is_registered_with_the_default_toolsets(server_f
     assert "documents" in TOOLSETS and "documents" not in DEFAULT_TOOLSETS
 
 
-async def test_the_documents_toolset_registers_fifteen_tools_and_the_flag_adds_the_two_gated_ones(server_factory):
+async def test_the_documents_toolset_registers_nineteen_tools_and_the_flag_adds_the_two_gated_ones(server_factory):
     off = {t.name for t in await list_tools(server_factory(toolsets={"documents"}, destructive=False))}
     on = {t.name for t in await list_tools(server_factory(toolsets={"documents"}, destructive=True))}
-    assert off == set(EXPECTED_TOOLS) - GATED and len(off) == 15
+    assert off == set(EXPECTED_TOOLS) - GATED and len(off) == 19
     assert on == set(EXPECTED_TOOLS) and on - off == GATED
 
 
@@ -2504,8 +2567,7 @@ async def test_the_docstrings_state_the_facts_the_model_must_know(server):
     assert "time-limited token" in tools["get_document"]
     assert "10 MB cap" in tools["export_document_pdf"] and "no export event" in tools["export_document_pdf"]
     assert "Active ones only unless status_ids includes 2" in tools["list_documents"]
-    assert "archives every document below it, at any depth" in tools["archive_document"]
-    assert "documents archived under it stay archived" in tools["restore_document"]
+    assert "Gorelo's texts disagree" in tools["archive_document"] and "assume the whole tree" in tools["archive_document"]
     assert "TOP level" in tools["archive_document"] and "TOP level" in tools["restore_document"]
     assert "refuses one that is not archived" in tools["restore_document"]
     assert "Give exactly one place" in tools["create_document"] and "added to its related items" in tools["create_document"]
@@ -2523,7 +2585,7 @@ async def test_the_docstrings_state_the_facts_the_model_must_know(server):
     assert "Archiving is not unsharing: unshare_document turns sharing off" in tools["archive_document"]
     assert "If it or a document under it is shared, check who can now see it" in tools["move_document"]
     assert "takes one out of the default list" in tools["create_document"]
-    assert "updated_since includes new documents at their creation time" in tools["list_documents"]
+    assert "make two calls, one with updated_since and one with created_since" in tools["list_documents"]
     for name in GATED:
         assert "Ask the user first; needs confirm=true." in tools[name]
 
@@ -2556,15 +2618,9 @@ async def test_a_tool_text_that_names_a_gated_tool_gives_its_condition_phrase(se
 async def test_the_sort_by_enum_has_the_member_order_the_other_list_tools_pin(server):
     # typing caches `Literal[...] | None` by its members whatever their order, so the module that is imported first fixes the
     # enum order of every later tool that declares the same members: tools/projects.py and tools/tickets.py pin
-    # ["updatedOn", "createdOn"], and tools/documents.py (imported before both) must declare them in that order
+    # ["updatedOn", "createdOn"]; list_documents has its own Literal that adds documentOrder (the app's sibling order)
     tools = {t.name: t for t in await list_tools(server)}
-    for name in ("list_documents", "list_projects", "list_tickets"):
-        assert tools[name].inputSchema["properties"]["sort_by"]["enum"] == (["updatedOn", "createdOn", "documentOrder"] if name == "list_documents" else ["updatedOn", "createdOn"]), name
+    for name in ("list_projects", "list_tickets"):
+        assert tools[name].inputSchema["properties"]["sort_by"]["enum"] == ["updatedOn", "createdOn"], name
+    assert tools["list_documents"].inputSchema["properties"]["sort_by"]["enum"] == ["updatedOn", "createdOn", "documentOrder"]
     assert tools["list_documents"].inputSchema["properties"]["sort_order"]["enum"] == ["asc", "desc"]
-
-
-async def test_list_documents_sends_document_order_with_its_parent(server, mock_gorelo):
-    mock_gorelo.on("GET", "/v1/documents", paged_envelope([], total_count=0))
-    await call_tool(server, "list_documents", {"sort_by": "documentOrder", "parent_document_id": PARENT})
-    assert mock_gorelo.last.query["SortBy"] == "documentOrder"
-    assert mock_gorelo.last.query["ParentDocumentId"] == PARENT
