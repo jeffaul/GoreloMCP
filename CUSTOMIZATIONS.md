@@ -256,3 +256,18 @@ localhost-only installation example.
 For rollback to pre-1.3.0 code, remove documents from GORELO_TOOLSETS and use
 GORELO_ENABLE_DESTRUCTIVE=0 (not a list of names). Restore the recorded fork
 commit and frozen dependencies. Preserve OAuth state.
+
+## Upstream 1.5.1 integration (2026-11-03)
+
+- Merge upstream through `9ac7d767c3c6f81a7c95f2decf518ba299f1e6b1`.
+- Adopt the October 29 API snapshot and upstream 1.4 rate-limit handling and
+  1.5 tool expansion. Contract writes remain held back by upstream 1.5.1.
+- Preserve systemd `MCP_BIND_HOST`, ChatGPT OAuth redirect allowlists, the
+  explicit `move_to_client_id` asset ownership safeguard, and the existing
+  test-gated production deployment workflow.
+- Retain the fork's accounting-status verification reminders and required
+  uptime-maintenance reason. Keep production environment, OAuth state,
+  configured toolsets, public sharing policy and destructive-tool settings.
+- Resolve superseded October 23 compatibility changes using the newer upstream
+  implementations and regenerate the tool catalog from the merged registry.
+- Run offline tests only. No live write harness or customer-data mutations.

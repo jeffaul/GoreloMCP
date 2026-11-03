@@ -454,7 +454,6 @@ NOT_REFUSED = (
         ("no-read", f"{NOT_REFUSED} (0 request(s), no HTTP answer): location_id: required when client_id moves the asset"),
         ("other-text", f"{NOT_REFUSED} (1 request(s), no HTTP answer): name: not blank"),
         ("http", f"{NOT_REFUSED} (1 request(s), HTTP 500): Gorelo failed update_custom_asset (HTTP 500, code 1)"),
-        ("two-requests", f"{NOT_REFUSED} (2 request(s), no HTTP answer): location_id: required when client_id moves the asset"),
         (
             "accepts",
             "update_custom_asset with another client_id and no location_id was ACCEPTED (a PATCH reached Gorelo): the asset may "
@@ -467,6 +466,19 @@ async def test_a_move_without_a_location_that_the_tool_does_not_refuse_locally_a
     with pytest.raises(write_matrix.CheckFailed) as failed:
         await write_matrix.area_custom_assets(matrix)
     assert str(failed.value) == said
+
+
+async def test_a_refusal_after_a_read_that_the_client_sent_again_is_still_the_local_refusal(tmp_path):
+    # the client sends the read once more after a 429, a 502, 503 or 504 or a refused connection: two GETs and no write are the
+    # same local refusal, and the note says how many requests there were
+    matrix, session = refusal_matrix(tmp_path, "two-requests")
+    await write_matrix.area_custom_assets(matrix)
+    assert matrix.guard.writes_allowed == 3  # the same three writes as without the retry; the refused move wrote nothing
+    assert any(
+        "refused locally after its read of the asset, nothing was sent but GETs (2 requests: the read and the client's own retries "
+        "of it)" in note
+        for note in matrix.notes
+    )
 
 
 # the opt-in move to the second client and back (--with-asset-move)
@@ -808,7 +820,7 @@ def test_the_custom_asset_tools_are_named_apart_and_only_the_flag_opens_them():
     )
     assert write_matrix.tools_for(True, True, False, True) == write_matrix.MATRIX_TOOLS | write_matrix.CUSTOM_ASSET_TOOLS
     # the approved invoice run has its own set and the custom flag adds nothing to it
-    assert write_matrix.tools_for(False, False, True, True) == write_matrix.APPROVED_INVOICE_TOOLS
+    assert write_matrix.tools_for(False, False, True, True) == write_matrix.tools_for(False, False, True)
 
 
 def test_the_area_sits_after_items_and_before_the_custom_properties_and_documents_and_is_selected_by_name():
@@ -1010,8 +1022,9 @@ async def test_end_to_end_a_run_with_every_optional_area_but_the_approved_invoic
     report = await run(fake, with_items=True, with_invoices=True, with_custom_assets=True, with_asset_move=True, with_documents=True)
     assert report.ok, "\n".join(lines)
     # the approved invoice and the custom properties have flags of their own (the first one runs alone)
-    assert [r.status for r in report.results if r.area not in ("approved_invoice", "custom_properties")] == ["pass"] * (
-        len(report.results) - 2
+    new_areas = [area.key for area in write_matrix.OPT_INS]  # the 1.5.0 areas have flags of their own too
+    assert [r.status for r in report.results if r.area not in ("approved_invoice", "custom_properties", *new_areas)] == ["pass"] * (
+        len(report.results) - 2 - len(new_areas)
     )
     assert results(report)["custom_properties"].status == "skipped"
     assert report.summary["undeletable"] == 5  # the file of the comments area, the custom asset, two documents and the file of the first

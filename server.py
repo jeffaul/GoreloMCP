@@ -308,9 +308,32 @@ def _verify_ops(selected: list[ToolSpec], spec: SpecIndex) -> None:
         raise RuntimeError("cannot build the server: " + "; ".join(problems))
 
 
+def held_names_listed(settings: Settings, registry: Registry | None = None) -> list[str]:
+    """The sorted names of held tools (tools._common.HELD_TOOLS) that the GORELO_ENABLE_DESTRUCTIVE list of `settings`
+    names: [] when the variable is off, is a word (1 registers no held tool either) or names none of them. main.py logs
+    them as ignored; resolve_gated_tools drops them without an error."""
+    registry = REGISTRY if registry is None else registry
+    if not settings.destructive or settings.destructive_tools is None:
+        return []
+    return sorted(name for name in settings.destructive_tools if registry.is_held(name))
+
+
+def warn_held_tools(settings: Settings, registry: Registry | None = None) -> list[str]:
+    """Log ONE warning line when the GORELO_ENABLE_DESTRUCTIVE list names held tools (main.py calls it before the ready
+    line) and return their names: `gorelo-mcp held tools ignored: create_contract, update_contract (held back until Gorelo
+    releases them)`. Nothing is logged when the list names none, so a server started with 1 or without the variable says nothing."""
+    held = held_names_listed(settings, registry)
+    if held:
+        logger.warning("gorelo-mcp held tools ignored: %s (held back until Gorelo releases them)", ", ".join(held))
+    return held
+
+
 def resolve_gated_tools(settings: Settings, registry: Registry | None = None) -> list[str]:
     """The sorted names of the gated tools (kind destructive) that `settings` registers: [] while settings.destructive is
     off, every gated tool of the enabled toolsets when settings.destructive_tools is None, else exactly the tools it names.
+    A held tool (HELD_TOOLS: create_contract and update_contract until Gorelo releases contract writes) is never
+    registered, so it is never in the answer: a held name in the list is dropped without an error (held_names_listed
+    says which) and the valid names of an error leave the held tools out.
 
     GORELO_ENABLE_DESTRUCTIVE may list tool names, and settings.py does not know the tools, so the names are checked here
     against the registry (default: the real one) before any tool is registered. Raises SettingsError, ONE error that names
@@ -326,6 +349,8 @@ def resolve_gated_tools(settings: Settings, registry: Registry | None = None) ->
         reasons: list[str] = []
         for name in sorted(named):
             spec = by_name.get(name)
+            if registry.is_held(name):
+                continue
             if spec is None:
                 reasons.append(f"{name[:64]!r} (no tool has this name)")
             elif spec.kind != "destructive":

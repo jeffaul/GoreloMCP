@@ -475,7 +475,10 @@ def test_the_start_logs_every_gated_tool_of_the_enabled_toolsets_for_the_word_on
     monkeypatch.setenv("GORELO_ENABLE_DESTRUCTIVE", "1")
     monkeypatch.setenv("GORELO_TOOLSETS", "core,tickets,time")
     launch.main()
-    assert gated_lines(launch) == ["gorelo-mcp gated tools: delete_ticket_comment,delete_time_entry"]
+    # core gained three gated tools in 1.5.0 (delete_asset_type, delete_client_domain, delete_client_location)
+    assert gated_lines(launch) == [
+        "gorelo-mcp gated tools: delete_asset_type,delete_client_domain,delete_client_location,delete_ticket_comment,delete_time_entry"
+    ]
 
 
 def test_the_start_logs_the_listed_gated_tools_sorted_and_keeps_the_ready_line_shape(launch, monkeypatch):
@@ -507,6 +510,24 @@ def test_a_list_of_five_gated_tools_starts_and_is_logged_in_full(launch, monkeyp
     launch.main()
     assert launch.errors() == []
     assert gated_lines(launch) == ["gorelo-mcp gated tools: " + ",".join(sorted(FIVE_GATED.split(",")))]
+
+
+def test_a_list_with_the_held_contract_writes_starts_with_one_warning_between_the_gated_and_ready_lines(launch, monkeypatch):
+    # the production .env lists all 17 gated names of 1.5.0; 1.5.1 holds create_contract and update_contract back
+    declared = sorted(spec.name for spec in REGISTRY.specs if spec.kind == "destructive")
+    assert len(declared) == 17 and {"create_contract", "update_contract"} <= set(declared)
+    monkeypatch.setenv("GORELO_ENABLE_DESTRUCTIVE", ",".join(declared))
+    monkeypatch.setenv("GORELO_TOOLSETS", "all")
+    launch.main()
+    assert launch.errors() == [] and launch.served
+    held = "gorelo-mcp held tools ignored: create_contract, update_contract (held back until Gorelo releases them)"
+    messages = launch.messages()
+    assert messages.count(held) == 1
+    kept = [name for name in declared if name not in ("create_contract", "update_contract")]
+    assert gated_lines(launch) == ["gorelo-mcp gated tools: " + ",".join(kept)]
+    (ready,) = ready_lines(launch)
+    assert ready.endswith(" destructive=True tools=158")
+    assert messages.index(gated_lines(launch)[0]) < messages.index(held) < messages.index(ready)
 
 
 @pytest.mark.parametrize(

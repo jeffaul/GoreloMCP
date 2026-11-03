@@ -14,7 +14,9 @@ Variables:
     GORELO_ENABLE_DESTRUCTIVE optional. Switches on the gated tools: the delete and void tools,
                               remove_document_related_item (it removes the link between a document and another
                               record), create_approved_invoice (it creates an Approved invoice, which Gorelo pushes to
-                              the connected accounting system at once and may email to its recipients) and
+                              the connected accounting system at once and may email to its recipients),
+                              approve_invoice (it approves an existing invoice, which Gorelo pushes to the connected
+                              accounting system at once) and
                               share_document (it turns a document's public link on, so anyone who has the link can
                               read it without a login, or publishes it to the client portal). Every call still needs
                               confirm=true.
@@ -27,7 +29,9 @@ Variables:
                               a name that is not a gated tool, or a gated tool of a toolset that GORELO_TOOLSETS does not
                               enable, stops the start with one error that names this variable, the bad names and the valid
                               ones. A word next to a tool name is an error (a word with stray commas, such as 1, is the
-                              word). Anything else is an error.
+                              word). Anything else is an error. create_contract and update_contract are held back
+                              (tools._common.HELD_TOOLS): no setting registers them, and server.resolve_gated_tools
+                              drops them from a list without an error (main.py logs one warning line).
     GORELO_BASE_URL           optional. The Gorelo API address: the host of the region your Gorelo account is
                               hosted in: US https://api.usw.gorelo.io (the default when unset or blank) or Australia
                               https://api.aue.gorelo.io. "/v1" and a trailing slash are optional; the value is

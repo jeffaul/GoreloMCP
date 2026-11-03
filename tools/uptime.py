@@ -98,7 +98,7 @@ FILTER_FIELDS = {
 }
 LIST_FIELD_MAP = {**FILTER_FIELDS, "page_size": "PageSize", "cursor": "Cursor"}
 
-# Body fields that CreateUptimeCommand and UpdateUptimeCommand share.
+# Body fields that CreateUptimeCommand and UpdateUptimeCommand share (named *UptimeCheck* before contract 05200951c89e).
 CHECK_BODY = {
     "check_type": "TypeId",
     "frequency_minutes": "Frequency",
