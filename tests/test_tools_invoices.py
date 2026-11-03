@@ -3047,7 +3047,7 @@ async def test_approve_refuses_without_confirm_with_no_http_and_says_what_would_
     text = await call_tool_error(server, "approve_invoice", {"invoice_id": INVOICE_ID})
     assert text.startswith(f"confirm: refusing to approve invoice {INVOICE_ID} without confirm=true.")
     assert "pushes the invoice to the connected accounting system at once" in text
-    assert "voids it in Gorelo ONLY" in text and "the user must void it there too" in text and "observed with Xero" in text
+    assert "Gorelo now says" in text and "earlier Xero probe" in text and "Verify the accounting status before any manual void" in text
     assert mock_gorelo.requests == []
 
 
@@ -3127,9 +3127,9 @@ async def test_approve_invoice_is_gated_and_says_the_same_things_as_create_appro
     doc = flat(inspect.getdoc(invoices.approve_invoice))
     assert 40 < len(doc) <= 900
     assert "pushes the invoice to the connected accounting system at once" in doc
-    assert "voids it in Gorelo ONLY, so the copy in the accounting system stays open (observed with Xero)" in doc
-    assert "who must void it there too" in doc and "A total of exactly 0 is recorded as Paid instead: check Status" in doc
-    assert doc.index("Gorelo ONLY") < doc.index("Ask the user first")
+    assert "Gorelo now says" in doc and "earlier Xero probe" in doc
+    assert "Verify the accounting status before any manual void" in doc and "A total of exactly 0 is recorded as Paid instead: check Status" in doc
+    assert doc.index("Verify the accounting status") < doc.index("Ask the user first")
     assert doc.endswith("Ask the user first; needs confirm=true.")
     parameter = inspect.signature(spec.fn).parameters["confirm"]
     assert parameter.default is False and "Strict" in repr(parameter.annotation)
@@ -3293,7 +3293,7 @@ async def test_an_approved_no_tax_line_that_still_shows_tax_gets_a_loud_warning(
     assert result["warning"].startswith("WARNING: no_tax was asked for line_items[0]")
     assert f"TaxId {EXEMPT_ID} (the Tax Exempt rate) was sent" in result["warning"]
     assert "APPROVED and already pushed to the accounting system" in result["warning"]
-    assert "voids it in Gorelo ONLY" in result["warning"]
+    assert "Verify the accounting status before any manual void" in result["warning"]
     assert f"tax id {EXEMPT_ID}" in result["note"]
 
 

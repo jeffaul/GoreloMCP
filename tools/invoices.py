@@ -702,8 +702,7 @@ def _no_tax_warning(taxed: list[str], tax_id: int | None = None, approved: bool 
     if approved:
         return (
             f"WARNING: {head} This invoice is APPROVED and already pushed to the accounting system: tell the user at once, "
-            "check the amounts with get_invoice and list_taxes, and note that a void with delete_invoice voids it in Gorelo "
-            "ONLY (the user must void the copy in the accounting system too)."
+            "check the amounts with get_invoice and list_taxes. Verify the accounting status before any manual void."
         )
     return (
         f"{head} The invoice is not approved, so fix it with update_invoice (update_lines with line_id and tax_id of your "
@@ -1707,7 +1706,7 @@ async def approve_invoice(
 ) -> dict:
     """Approve a Draft or Submitted invoice and return it read back. It reads the invoice first and refuses any other status.
     Resolve ids first: invoice_id -> list_invoices.
-    Side effects: approving pushes the invoice to the connected accounting system at once. Nothing takes that back: delete_invoice, when deletes are enabled, voids it in Gorelo ONLY, so the copy in the accounting system stays open (observed with Xero): tell the user, who must void it there too. A total of exactly 0 is recorded as Paid instead: check Status in the result.
+    Side effects: approving pushes the invoice to the connected accounting system at once. Gorelo now says the void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void. A total of exactly 0 is recorded as Paid instead: check Status in the result.
     After a "did not confirm" error read get_invoice before repeating.
     Ask the user first; needs confirm=true.
     """
@@ -1716,9 +1715,9 @@ async def approve_invoice(
         confirm,
         action=f"approve invoice {invoice_guid}",
         effect=(
-            "Approving pushes the invoice to the connected accounting system at once, and nothing takes that back: "
-            "voiding it with delete_invoice voids it in Gorelo ONLY, so the copy in the accounting system stays open "
-            "(observed with Xero) and the user must void it there too. Nothing has been sent to Gorelo."
+            "Approving pushes the invoice to the connected accounting system at once. Gorelo now says the void is sent to "
+            "accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void. "
+            "Nothing has been sent to Gorelo."
         ),
     )
     await _invoice_open_for_change(ctx, "approve_invoice", invoice_guid, verb="approves")
