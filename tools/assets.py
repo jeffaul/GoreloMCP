@@ -36,12 +36,11 @@ not raise after a confirmed write: when it fails, or answers no usable record of
 before any read-back.
 
 update_custom_asset can move an asset: PATCH text "A new ClientId moves the asset to that client. The asset's location and
-contact must belong to the new client, so send a LocationId of the new client, and a ContactId of it or null". move_to_client_id is
-optional and means the NEW client. client_id is checked only when also supplied with an explicit move; it never changes ownership.
-When move_to_client_id is given the tool reads the asset first (GET) and, for a client other than the
+contact must belong to the new client, so send a LocationId of the new client, and a ContactId of it or null". client_id is
+optional and means the NEW client. When it is given the tool reads the asset first (GET) and, for a client other than the
 one the asset holds, refuses locally, before any PATCH, unless location_id is given and, when the asset holds a contact,
 contact_id is given or "contact_id" is in clear_fields. The current client is no move. After a move the read-back must show
-the new client, else the tool raises a write-unconfirmed shape error. ClientId is sent only when move_to_client_id was given.
+the new client, else the tool raises a write-unconfirmed shape error. ClientId is sent iff client_id was given.
 
 Agents carry LocationId (renamed from ClientLocationId on 2026-08-21) and WarrantyStartDate /
 WarrantyEndDate (replaced WarrantyExpiryDate the same day). The agent list rows are AgentAssetListItemResponse (DeviceListItemResponse before contract 05200951c89e)
@@ -164,7 +163,7 @@ MOVE_CLIENT_HELP = (
 )
 NOTHING_TO_CHANGE = (
     "nothing to change: give at least one of name, location_id, hardware_type_id, description, contact_id, "
-    "warranty_start_date, warranty_end_date, local_ip_address, ip_address, manufacturer, model, serial_number or clear_fields (move_to_client_id alone changes nothing; it moves the "
+    "warranty_start_date, warranty_end_date, local_ip_address, ip_address, manufacturer, model, serial_number or clear_fields (client_id alone changes nothing; it moves the "
     "asset only together with a location_id of the new client)"
 )
 
@@ -206,7 +205,7 @@ CUSTOM_BODY_MAP = {
     "model": "Model",
     "serial_number": "SerialNumber",
 }
-UPDATE_CUSTOM_MAP = {**{k: v for k, v in CUSTOM_BODY_MAP.items() if k != "client_id"}, "move_to_client_id": "ClientId", "custom_asset_id": "customAssetId"}
+UPDATE_CUSTOM_MAP = {**CUSTOM_BODY_MAP, "custom_asset_id": "customAssetId"}
 # Fields that Gorelo clears with a JSON null (name, location_id and hardware_type_id cannot be cleared).
 CUSTOM_CLEARABLE = (
     "description", "contact_id", "warranty_start_date", "warranty_end_date", "local_ip_address", "ip_address", "manufacturer",
@@ -835,7 +834,7 @@ def _held_id(key: str, row: dict[str, Any]) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(
             f"custom_asset_id: {GET_CUSTOM_OP} returned a {key} that is {describe_value(value)}, not an id; "
-            "refusing to guess whether move_to_client_id moves the asset. Nothing was changed."
+            "refusing to guess whether client_id moves the asset. Nothing was changed."
         )
     return value
 
@@ -858,13 +857,13 @@ async def _is_move(
     now = f"it is at client {held_client} now" if held_client is not None else "it has no client now"
     if location_id is None:
         raise ValueError(
-            f"location_id: required when move_to_client_id moves the asset ({now}); give a location of client {client_id} "
+            f"location_id: required when client_id moves the asset ({now}); give a location of client {client_id} "
             "(list_client_locations). Nothing was changed."
         )
     held_contact = _held_id("ContactId", row)
     if held_contact is not None and contact_id is None and not clears_contact:
         raise ValueError(
-            f"contact_id: the asset holds contact {held_contact}; when move_to_client_id moves it, give contact_id (a contact of "
+            f"contact_id: the asset holds contact {held_contact}; when client_id moves it, give contact_id (a contact of "
             f"client {client_id}, which may be {held_contact} if it already belongs to that client) or put contact_id in "
             "clear_fields to unassign it. Nothing was changed."
         )
@@ -970,12 +969,11 @@ async def create_custom_asset(
 async def update_custom_asset(
     ctx: Context,
     custom_asset_id: Annotated[str, Field(description="Custom asset UUID: the Id of a list_custom_assets row.")],
-    move_to_client_id: Annotated[StrictId | None, Field(description=MOVE_CLIENT_HELP)] = None,
-    client_id: Annotated[StrictId | None, Field(description="Expected current owner checked before an explicit move. Ignored for ordinary edits; never a move instruction. Use move_to_client_id to move.")] = None,
+    client_id: Annotated[StrictId | None, Field(description=MOVE_CLIENT_HELP)] = None,
     name: Annotated[str | None, Field(description=f"New name, not blank, at most {NAME_MAX} characters.")] = None,
     location_id: Annotated[
         StrictId | None,
-        Field(description="New location (list_client_locations); of the new client when move_to_client_id moves the asset."),
+        Field(description="New location (list_client_locations); of the new client when client_id moves the asset."),
     ] = None,
     hardware_type_id: Annotated[StrictId | None, Field(description="New asset type id (list_asset_types).")] = None,
     description: Annotated[str | None, Field(description=f"New description, at most {DESCRIPTION_MAX} characters.")] = None,
@@ -994,22 +992,14 @@ async def update_custom_asset(
 ) -> dict:
     """Change fields of one custom asset, or move it to another client; returns the updated row (read back by id), or {Id, warning} if the read-back fails. Send only what changes.
     Name, location_id and hardware_type_id can be changed but not cleared; clear_fields empties the other nine.
-    To move it give move_to_client_id (the new client) with a location_id of that client and, if get_custom_asset shows a ContactId, a contact_id of that client or clear_fields contact_id. It is the same asset (same Id), not a copy. The current client moves nothing.
+    To move it give client_id (the new client) with a location_id of that client and, if get_custom_asset shows a ContactId, a contact_id of that client or clear_fields contact_id. It is the same asset (same Id), not a copy. The current client moves nothing.
     Resolve ids first: custom_asset_id -> list_custom_assets; the others as their parameter texts say.
     Side effects: overwrites or clears values; a move changes the owning client. The contact is also in the asset's related items: assigning one adds it there, replacing or clearing it removes the previous one. This server cannot delete custom assets.
     """
     asset_id = guid("custom_asset_id", custom_asset_id)
-    if client_id is not None:
-        positive_id("client_id", client_id)
-    if move_to_client_id is not None:
-        positive_id("move_to_client_id", move_to_client_id)
-    if client_id is not None and move_to_client_id is not None:
-        current = await client_of(ctx).get_one(GET_CUSTOM_OP, path_params={"customAssetId": asset_id}, tool="update_custom_asset")
-        if not isinstance(current, dict) or current.get("ClientId") != client_id:
-            raise ValueError("client_id: current asset ownership could not be verified; nothing was written")
     clear = _clear_names(clear_fields)
     values = _custom_values(
-        name=name, client_id=move_to_client_id, location_id=location_id, hardware_type_id=hardware_type_id,
+        name=name, client_id=client_id, location_id=location_id, hardware_type_id=hardware_type_id,
         description=description, contact_id=contact_id, warranty_start_date=warranty_start_date,
         warranty_end_date=warranty_end_date, local_ip_address=local_ip_address, ip_address=ip_address,
         manufacturer=manufacturer, model=model, serial_number=serial_number,

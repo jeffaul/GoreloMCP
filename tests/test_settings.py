@@ -47,7 +47,7 @@ def test_minimal_valid_environment_uses_defaults():
     assert settings.toolsets == frozenset(DEFAULT_TOOLSETS)
     assert isinstance(settings.toolsets, frozenset)
     assert settings.destructive is False
-    assert settings.extra_redirect_domains == () and settings.redirect_domains == ["claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost"]
+    assert settings.extra_redirect_domains == () and settings.redirect_domains == ["claude.ai", "claude.com", "localhost"]
     assert settings.api_host == "api.usw.gorelo.io"
 
 
@@ -325,7 +325,7 @@ def test_the_builtin_redirect_domains_are_what_the_provider_allows_by_default(tm
         base_url="https://mcp.example.test", password="a-test-password-not-real", state_dir=str(tmp_path / "state")
     )
     try:
-        assert provider.allowed_redirect_domains == list(BUILTIN_REDIRECT_DOMAINS) == ["claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost"]
+        assert provider.allowed_redirect_domains == list(BUILTIN_REDIRECT_DOMAINS) == ["claude.ai", "claude.com", "localhost"]
     finally:
         provider.close()
 
@@ -334,7 +334,7 @@ def test_the_builtin_redirect_domains_are_what_the_provider_allows_by_default(tm
 def test_unset_or_blank_extra_redirect_domains_add_nothing(raw):
     extra = {} if raw is None else {"MCP_EXTRA_REDIRECT_DOMAINS": raw}
     settings = Settings.from_env(env(**extra))
-    assert settings.extra_redirect_domains == () and settings.redirect_domains == ["claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost"]
+    assert settings.extra_redirect_domains == () and settings.redirect_domains == ["claude.ai", "claude.com", "localhost"]
     assert parse_extra_redirect_domains(raw) == ()
 
 
@@ -342,7 +342,7 @@ def test_extra_redirect_domains_are_trimmed_lowercased_deduplicated_and_come_aft
     raw = f" {POWER_PLATFORM.title()} , example.org,GLOBAL.consent.azure-apim.net,CLAUDE.AI, claude.com,,x1.example.org "
     settings = Settings.from_env(env(MCP_EXTRA_REDIRECT_DOMAINS=raw))
     assert settings.extra_redirect_domains == (POWER_PLATFORM, "example.org", "x1.example.org")
-    assert settings.redirect_domains == ["claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost", POWER_PLATFORM, "example.org", "x1.example.org"]
+    assert settings.redirect_domains == ["claude.ai", "claude.com", "localhost", POWER_PLATFORM, "example.org", "x1.example.org"]
     settings.redirect_domains.append("evil.example")  # a copy: the setting itself cannot be changed through it
     assert "evil.example" not in settings.redirect_domains
 

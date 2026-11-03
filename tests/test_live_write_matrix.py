@@ -3675,7 +3675,7 @@ READ = "GET /v1/invoices/{invoiceId}"
 NOT_YET_SYNCED = "approved invoice INV-1042 not yet synced to accounting; check the accounting system, then void it with: "
 # Gorelo's void does not reach the accounting system, so every hint that sends the user to `cleanup --void-approved`
 # says that this command voids in Gorelo only. Spelled out here, not read from the module: a change of the words fails a test.
-GORELO_ONLY = "verify accounting status after this void before any manual void"
+GORELO_ONLY = "this voids it in Gorelo only: void its copy in the accounting system by hand too"
 
 
 def void_command(report) -> str:
@@ -5316,7 +5316,8 @@ def test_tax_problem_is_none_only_for_no_tax_and_exactly_one_dollar():
 # run pushed stayed open in Xero after Gorelo voided it)
 
 REMINDER = (
-    "Gorelo now says the void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void"
+    "the void is in Gorelo only: check the accounting system and void the invoice there too "
+    "(Gorelo's void is not pushed to the connected accounting system, seen with Xero)"
 )
 SUMMARY_REMINDER = f"reminder: approved invoice INV-1042: {REMINDER}"
 
@@ -5784,20 +5785,24 @@ def test_the_module_docstring_tells_the_rules_of_the_approved_run_as_the_code_ha
         "the wait ends only on a status other than Approved or when the 120 s run out",
         "(a read that fails is one of those polls, not a stop: the next one asks again)",
         # the void is in Gorelo only
-        "then a note to verify accounting status after the void before any manual void",
+        "then a note that the void is in Gorelo only (check the accounting system and void the invoice there too: Gorelo's void is not "
+        "pushed to the connected accounting system, seen with Xero)",
         # the hints that name the cleanup command say that it voids in Gorelo only too
         "not yet synced to accounting; check the accounting system, then void it with: python -m scripts.live.cleanup "
-        "<manifest> --void-approved (verify accounting status after this void before any manual void)\"",
+        "<manifest> --void-approved (this voids it in Gorelo only: void its copy in the accounting system by hand too)\"",
         "approved invoice <DisplayNumber> has no Number, so delete_invoice cannot find it; void it with: python -m "
-        "scripts.live.cleanup <manifest> --void-approved (verify accounting status after this void before any manual void)\"",
-        "and the note to verify accounting status after this void (VOID_COMMAND_NOTE)",
+        "scripts.live.cleanup <manifest> --void-approved (this voids it in Gorelo only: void its copy in the accounting "
+        "system by hand too)\"",
+        "and the note that this voids it in Gorelo only (VOID_COMMAND_NOTE: its copy in the accounting system is voided by "
+        "hand too)",
         "The two sentences live in scripts/live/cleanup.py (VOID_REMINDER and VOID_COMMAND_NOTE), which says the first for "
         "each invoice it voids itself and the second in its leftover text and in the help of --void-approved; every hint "
         "printed here that names that command (the area's FAIL for an invoice that never synced or has no Number, and the "
         "summary's line for an Approved invoice left over) ends with the second.",
         "The summary of the run repeats the reminder about the void, for every approved invoice of the run that was voided, "
         "as its last line before the result",
-        "a reminder line that Gorelo now says the void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void",
+        "a reminder line that the void is in Gorelo only: check the accounting system and void the invoice there too (Gorelo's void "
+        "is not pushed to the connected accounting system, seen with Xero)",
         # the tax-exempt rate is the line's TaxId, and the totals are checked after the void, as a note
         "tax_id of the tax-exempt rate, which the guard compares with the id the intent recorded",
         "exactly ONE rate with Percentage 0 whose Name or Code is exactly \"Tax Exempt\" (case-insensitive)",

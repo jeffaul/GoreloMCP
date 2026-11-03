@@ -485,8 +485,7 @@ async def test_default_tools_list_stays_within_budget(server_factory):
 # same contract's sentence on the two device tools, 108 bytes for the update_client sentence that has the model compare
 # the returned Values with what it sent, and 103 bytes for the one that says update_client reads the client first. At 1.2.0
 # the budget left 891 bytes (about 1 percent) above that.
-# AulTECH adds an explicit move parameter and expected-owner guard; measured 147422 bytes.
-TOOLS_LIST_BUDGET_BYTES = 149000
+TOOLS_LIST_BUDGET_BYTES = 147200
 MAX_TOOL_DESCRIPTION_CHARS = 900
 MAX_PARAM_DESCRIPTION_CHARS = 220
 

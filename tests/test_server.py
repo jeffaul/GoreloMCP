@@ -828,7 +828,7 @@ def test_main_wires_settings_auth_and_the_http_server(monkeypatch):
     assert calls["auth"] == {
         "base_url": "https://mcp.example.test",
         "password": "pw-abc",
-        "allowed_redirect_domains": ["claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost"],
+        "allowed_redirect_domains": ["claude.ai", "claude.com", "localhost"],
         "state_dir": str(REPO_ROOT / ".oauth-state"),
     }
     assert calls["settings"] == Settings(

@@ -1469,7 +1469,7 @@ async def test_approve_via_update_makes_a_draft_of_one_dollar_and_approves_it_wi
     notes = found.notes
     assert any(n.startswith("approved invoice INV-1042: pushed to the accounting system") for n in notes)
     assert any("approve_invoice" not in n or True for n in notes)
-    assert any(line.startswith("reminder: approved invoice INV-1042") and "Verify the accounting status before any manual void" in line for line in lines)
+    assert any(line.startswith("reminder: approved invoice INV-1042") and "Gorelo only" in line for line in lines)
     assert lines[-1] == "result: PASSED"
 
 

@@ -375,7 +375,7 @@ def test_the_start_logs_the_default_api_host_and_no_extra_redirect_domains(launc
         "gorelo-mcp settings: api_host=api.usw.gorelo.io extra_redirect_domains=none"
     ]
     assert [s.base_url for s in launch.built] == ["https://api.usw.gorelo.io/v1"]
-    assert launch.providers[0].allowed_redirect_domains == ["claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost"]
+    assert launch.providers[0].allowed_redirect_domains == ["claude.ai", "claude.com", "localhost"]
 
 
 def test_the_region_and_the_extra_redirect_domains_reach_the_server_the_provider_and_the_log(launch, monkeypatch):
@@ -385,7 +385,7 @@ def test_the_region_and_the_extra_redirect_domains_reach_the_server_the_provider
     assert launch.errors() == [] and launch.served
     assert [s.base_url for s in launch.built] == ["https://api.aue.gorelo.io/v1"]
     assert launch.providers[0].allowed_redirect_domains == [
-        "claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost", "global.consent.azure-apim.net", "example.org"
+        "claude.ai", "claude.com", "localhost", "global.consent.azure-apim.net", "example.org"
     ]
     assert "gorelo-mcp settings: api_host=api.aue.gorelo.io extra_redirect_domains=global.consent.azure-apim.net,example.org" in launch.messages()
     everything = " ".join(launch.messages())
@@ -597,7 +597,7 @@ def test_the_provider_is_built_with_the_four_arguments_main_passes(monkeypatch, 
         monkeypatch.delenv(name, raising=False)
     main_module.main()
     assert set(seen) - {"run"} == {"base_url", "password", "state_dir", "allowed_redirect_domains"}  # the four arguments main() passes
-    assert seen["allowed_redirect_domains"] == ["claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost"]
+    assert seen["allowed_redirect_domains"] == ["claude.ai", "claude.com", "localhost"]
     assert seen["state_dir"] == str(tmp_path / ".oauth-state")
 
 

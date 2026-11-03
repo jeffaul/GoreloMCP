@@ -72,7 +72,7 @@ Areas, in this order (--only takes a comma separated list and keeps this order; 
                (since contract a7954b24844b a different ClientId MOVES the asset and needs a LocationId of the new client; the
                check passes only when every request of that call was a GET (that read, and the client's own retry of it after a
                429, a 502, 503 or 504 or a refused connection, if any), the guard let no write through and the tool's
-               error has no HTTP status and says "location_id: required when move_to_client_id moves the asset"; anything else fails
+               error has no HTTP status and says "location_id: required when client_id moves the asset"; anything else fails
                the area, and a PATCH that carried the second client would be refused by the guard, which stops the run).
                With --with-asset-move the area then MOVES the asset to the second client and back: the second client must be
                Active and have a location (list_client_locations; else the move is skipped with a note), the manifest details of
@@ -203,10 +203,13 @@ Areas, in this order (--only takes a comma separated list and keeps this order; 
                again at the next poll, and the wait ends only on a status other than Approved or when the 120 s run
                out. If ExternalId never is set, nothing is voided and the area FAILS saying "approved invoice
                <DisplayNumber> not yet synced to accounting; check the accounting system, then void it with: python -m
-               scripts.live.cleanup <manifest> --void-approved (verify accounting status after this void before any manual void)". Once ExternalId is set (noted, with whether PaymentLink is set):
+               scripts.live.cleanup <manifest> --void-approved (this voids it in Gorelo only: void its copy in the
+               accounting system by hand too)". Once ExternalId is set (noted, with whether PaymentLink is set):
                delete_invoice (the number, expected status Approved, confirm=true; the answer must say StatusId 4, Void;
                when Gorelo still answers 429 to its lookup or its DELETE after the client's own retries, the area asks
-               again, up to 3 attempts in all, because Gorelo did not process that request), then a note to verify accounting status after the void before any manual void, get_invoice (Status.Id 4) and list_invoices (the test client, the label
+               again, up to 3 attempts in all, because Gorelo did not process that request), then a note that
+               the void is in Gorelo only (check the accounting system and void the invoice there too: Gorelo's void is
+               not pushed to the connected accounting system, seen with Xero), get_invoice (Status.Id 4) and list_invoices (the test client, the label
                as query), which must still list it. The read after the void also checks TotalTax 0 and Total 1.0 (the
                line carried the tax-exempt rate and billed $1): when it reads otherwise, a loud note says the no-tax check FAILED. That is
                only a note, made after the void, so it can never stop or skip the void or its bookkeeping. A voided
@@ -700,7 +703,7 @@ is NOT voided (no lookup by Number, no DELETE: the area fails, and the cleanup, 
 Draft's, and a voided invoice sends nothing in the cleanup (a known residue). An approved invoice that reads with no
 Number is not voided by the area either (delete_invoice finds an invoice by its Number): the area fails with "approved
 invoice <DisplayNumber> has no Number, so delete_invoice cannot find it; void it with: python -m scripts.live.cleanup
-<manifest> --void-approved (verify accounting status after this void before any manual void)", and the
+<manifest> --void-approved (this voids it in Gorelo only: void its copy in the accounting system by hand too)", and the
 cleanup, which never voids without that flag, leaves it for the user. A 429 on the create is not retried (one POST, a
 failed area, an intent settled as failed), and neither is one on its read-back, which belongs to the same call (the area
 fails, and the invoice stays Approved, recorded as such, for the user to void with --void-approved); every other request
@@ -716,7 +719,8 @@ before any DELETE because its lookup by Number found nothing). The cleanup the m
 void_approved: only the approved_invoice area voids, the one invoice it approved itself, and the user's own command
 voids a leftover): an Approved invoice recorded as 5 is reported as a leftover for the user with its display number and
 the command that voids it (python -m scripts.live.cleanup <manifest> --void-approved, which voids it with delete_invoice
-or, as for a Draft, the raw DELETE backstop) and the note to verify accounting status after this void (VOID_COMMAND_NOTE), a voided one is a known residue (sent nothing), and any other status
+or, as for a Draft, the raw DELETE backstop) and the note that this voids it in Gorelo only (VOID_COMMAND_NOTE: its copy
+in the accounting system is voided by hand too), a voided one is a known residue (sent nothing), and any other status
 (Paid, ...) is never deleted or voided, it is reported as a leftover for the user with its display number. A create
 that was announced without an id (create_invoice or create_approved_invoice) is searched by the run label
 (list_invoices for the test client). The uploaded attachment has no delete in the API: it is reported as "soft-deleted with
@@ -727,7 +731,8 @@ Output: a line as each area finishes (the run takes a few minutes at one request
 report, then the summary: one line per area (pass, FAIL with the reason, skipped, not run), the probe answers and
 notes, records created, cleaned, left over, known undeletable and announced without an id, a line per known
 undeletable record, the scopes that answered 403, and the guard counts; then, for every approved invoice of the run that
-was voided (by the area, or found void by the cleanup), a reminder line that Gorelo now says the void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void. The two sentences
+was voided (by the area, or found void by the cleanup), a reminder line that the void is in Gorelo only: check the
+accounting system and void the invoice there too (Gorelo's void is not pushed to the connected accounting system, seen with Xero). The two sentences
 live in scripts/live/cleanup.py (VOID_REMINDER and VOID_COMMAND_NOTE), which says the first for each invoice it voids
 itself and the second in its leftover text and in the help of --void-approved; every hint printed here that names that
 command (the area's FAIL for an invoice that never synced or has no Number, and the summary's line for an Approved invoice
@@ -870,8 +875,8 @@ FAILURE_LIMIT = 160  # characters of a failed read's text that go into a note
 RATE_LIMITED = "Gorelo is rate limiting requests (HTTP 429)"
 NOT_PROCESSED = "it did not process this request"
 # VOID_REMINDER (imported above from the cleanup, which says it too) is what is said after an approved invoice was voided:
-# The current contract says the void is sent to accounting; an earlier Xero observation differed. Verify the result.
-# VOID_COMMAND_NOTE ends every hint below that sends the user to `cleanup --void-approved`.
+# Gorelo's void does not reach the accounting system, so void the copy there yourself. VOID_COMMAND_NOTE (imported too)
+# ends every hint below that sends the user to `cleanup --void-approved`: that command voids in Gorelo only as well.
 # Why the items area does not run by default (it is also the area's detail in the summary).
 ITEMS_SKIP_REASON = "not live-tested by default: creates and deletes a catalog product on the test client"
 # Why the custom_assets area does not run by default (it is also the area's detail in the summary).
@@ -2366,13 +2371,13 @@ async def refuse_move_without_location(m: Matrix, asset_id: str, renamed: str) -
 
     Since contract a7954b24844b a different ClientId MOVES the asset, and Gorelo needs a LocationId of the new client; the tool reads
     the asset first and refuses locally, before any PATCH. It passes only on that refusal: a ToolFailed with no HTTP status whose text
-    says "location_id: required when move_to_client_id moves the asset", at least one request, all of them GETs (the read, and the client's own
+    says "location_id: required when client_id moves the asset", at least one request, all of them GETs (the read, and the client's own
     retry of it after a 429, a 502, 503 or 504 or a refused connection), and no write let through by the guard.
     Anything else is a CheckFailed saying what happened. A PATCH that carried the second client would be refused by the guard (the move
     option and the announcement are missing), which stops the run. Nothing moves."""
     requests, writes = m.pacer.requests, m.guard.writes_allowed
     try:
-        await m.tool("update_custom_asset", custom_asset_id=asset_id, move_to_client_id=SITE.second_client, name=renamed)
+        await m.tool("update_custom_asset", custom_asset_id=asset_id, client_id=SITE.second_client, name=renamed)
     except ToolFailed as exc:
         sent, wrote = m.pacer.requests - requests, m.guard.writes_allowed - writes
         if wrote:
@@ -2434,7 +2439,7 @@ async def move_custom_asset_out_and_back(m: Matrix, asset_id: str, home_location
     try:
         try:
             out = full(
-                await m.tool("update_custom_asset", custom_asset_id=asset_id, move_to_client_id=SITE.second_client, location_id=target),
+                await m.tool("update_custom_asset", custom_asset_id=asset_id, client_id=SITE.second_client, location_id=target),
                 "update_custom_asset (move)",
             )
             record_custom_asset_client(m, asset_id, SITE.second_client)  # answered: the record names the second client
@@ -2457,7 +2462,7 @@ async def move_custom_asset_out_and_back(m: Matrix, asset_id: str, home_location
         answered = False  # set once Gorelo answers the way back: the asset is then at the test client, whatever a read after that says
         try:
             home = full(
-                await m.tool("update_custom_asset", custom_asset_id=asset_id, move_to_client_id=SITE.test_client, location_id=home_location),
+                await m.tool("update_custom_asset", custom_asset_id=asset_id, client_id=SITE.test_client, location_id=home_location),
                 "update_custom_asset (move back)",
             )
             answered = True
@@ -2553,7 +2558,7 @@ async def area_custom_assets(m: Matrix) -> None:
         await m.tool(
             "update_custom_asset",
             custom_asset_id=asset_id,
-            move_to_client_id=SITE.test_client,  # the asset's current client: the tool reads the asset first and sees no move
+            client_id=SITE.test_client,  # the asset's current client: the tool reads the asset first and sees no move
             clear_fields=["description", "ip_address", "warranty_end_date"],
         ),
         "update_custom_asset",
@@ -4449,7 +4454,7 @@ class MatrixReport:
     leftovers, never alone a failure) and unresolved_intents.
 
     `voided` names the approved invoices of the run that were voided (voided_invoices): the summary says for each that the
-    accounting status must be verified after the void (VOID_REMINDER), whatever else the run did."""
+    void is in Gorelo only (VOID_REMINDER), whatever else the run did."""
 
     run_id: str
     manifest_path: str
@@ -4541,7 +4546,7 @@ def voided_invoices(manifest: Manifest) -> list[str]:
 
     An invoice is recorded with status_id 4 (INVOICE_VOID) when the area voided it (mark_voided) and when the cleanup found
     it void (a known residue); only an Approved invoice can be void, so each of these was pushed to the accounting system
-    and its accounting status must be verified after the void (VOID_REMINDER). Read from the manifest, so it holds whichever of the two noticed it."""
+    and its void is in Gorelo only (VOID_REMINDER). Read from the manifest, so it holds whichever of the two noticed it."""
     names = []
     for record in manifest.all_created():
         stored = record.details.get("status_id")
@@ -4664,7 +4669,7 @@ async def run_matrix(
                  Gorelo client switched off (see no_429_retries; the client is looked up before the first request), so a
                  429 on the one create is a plain rejected create. The cleanup that follows never voids (run_cleanup is
                  not given void_approved: that is the user's command, cleanup --void-approved). Whenever an approved
-                 invoice of the run was voided, the summary ends with a reminder that the accounting status must be verified after the void.
+                 invoice of the run was voided, the summary ends with a reminder that the void is in Gorelo only.
     settings     default live_settings() (reads the API key from the app .env); tests pass their own.
     transport    an httpx transport for every client of the run (tests pass httpx.MockTransport).
     pace         seconds between two requests (0 in tests).

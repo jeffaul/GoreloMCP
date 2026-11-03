@@ -285,10 +285,10 @@ def test_the_docstrings_state_the_facts_the_model_must_know():
     # a void happens in Gorelo ONLY, the copy in Xero stays open, so the model
     # is told before it asks the user; and a Void invoice kept its AmountDue
     assert (
-        "Gorelo now says the void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void."
+        "A void happens in Gorelo ONLY: the copy already pushed to the accounting system stays open (observed with Xero), so say so when you ask the user, who must void it there too."
     ) in delete
     assert "A Void invoice can still show AmountDue: read Status first." in delete
-    assert delete.index("Verify the accounting status") < delete.index("Ask the user first; needs confirm=true.")
+    assert delete.index("A void happens in Gorelo ONLY") < delete.index("Ask the user first; needs confirm=true.")
     assert "Ask the user first; needs confirm=true." in delete  # the consistency rule of every destructive tool
     listing = " ".join(inspect.getdoc(invoices.list_invoices).split())
     assert "filter by number, client, status or dates" in listing
@@ -831,8 +831,8 @@ DRAFT_DELETE_EFFECT = (
     "Nothing has been sent to Gorelo."
 )
 APPROVED_DELETE_EFFECT = (
-    "An Approved invoice is voided (status Void, still listed). Gorelo now says this status change is sent to "
-    "accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void. "
+    "An Approved invoice is voided (status Void, still listed) in Gorelo ONLY: the copy already pushed to the "
+    "accounting system stays open (observed with Xero), so the user must void it there too. "
     "Nothing has been sent to Gorelo."
 )
 
@@ -853,7 +853,7 @@ async def test_delete_refuses_without_confirm_and_makes_no_http_call(server, moc
     assert mock_gorelo.requests == []
 
 
-async def test_approved_void_confirmation_requires_accounting_verification_and_draft_does_not(
+async def test_the_refusal_for_an_approved_invoice_says_the_void_is_in_gorelo_only_and_the_one_for_a_draft_does_not(
     server, mock_gorelo
 ):
     approved = await call_tool_error(server, "delete_invoice", {"invoice_number": 1042, "expected_status": "Approved"})
@@ -861,8 +861,8 @@ async def test_approved_void_confirmation_requires_accounting_verification_and_d
     assert invoices.DELETE_EFFECT == {"Draft": DRAFT_DELETE_EFFECT, "Approved": APPROVED_DELETE_EFFECT}
     assert set(invoices.DELETE_EFFECT) == set(invoices.REMOVABLE_STATUS_IDS)  # a status Gorelo removes needs its own effect text
     # said before the user is asked to confirm: voiding does not reach the copy in the accounting system
-    assert "sent to accounting" in approved and "earlier Xero probe" in approved and "Verify the accounting status" in approved
-    assert "earlier Xero probe left its copy open" in approved
+    assert "in Gorelo ONLY" in approved and "stays open" in approved and "the user must void it there too" in approved
+    assert "observed with Xero" in approved
     assert "ONLY" not in draft and "accounting system" not in draft  # a Draft was never pushed
     assert mock_gorelo.requests == []  # both are refusals: nothing was sent
 
@@ -920,8 +920,8 @@ async def test_a_draft_that_gorelo_reports_as_void_afterwards_was_approved_and_i
     assert result["note"] == (
         "expected_status was Draft, so Gorelo should have answered StatusId 6 (Deleted), but it answered 4 (Void): "
         "the invoice changed after it was looked up. StatusId 4 means an Approved invoice was voided, so its status was "
-        "Approved when the delete reached Gorelo and it had already been pushed to accounting; Gorelo now says the void "
-        "is sent there too, but an earlier Xero probe left its copy open. Verify the accounting status before any manual void. "
+        "Approved when the delete reached Gorelo and it had already been pushed to the connected accounting system, "
+        "where the copy stays open (the void happened in Gorelo ONLY), so the user must void it there too. "
         "Check it in the Gorelo app."
     )
 
@@ -964,7 +964,7 @@ async def test_previous_status_is_read_from_the_answer_and_never_from_expected_s
     assert ("note" in result) == (expected != was)  # a note exactly when the answer is not the one expected
     # only an Approved invoice has been pushed to accounting, so only the note that says the invoice was Approved
     # (although the caller expected a Draft) mentions it
-    assert ("accounting" in result.get("note", "")) == (expected == "Draft" and was == "Approved")
+    assert ("accounting system" in result.get("note", "")) == (expected == "Draft" and was == "Approved")
 
 
 @pytest.mark.parametrize("expected, answered", [("Draft", 6), ("Approved", 4)])
@@ -1530,8 +1530,8 @@ def test_the_create_approved_invoice_docstring_states_the_facts_the_model_must_k
     # "cannot be undone except by voiding it" is gone: nothing takes the push back, and the user voids the copy by hand
     assert "cannot be undone except by voiding" not in doc
     assert (
-        "Nothing takes that back automatically: delete_invoice voids it. Gorelo now says the void is sent to accounting; "
-        "an earlier Xero probe left its copy open. Verify the accounting status before any manual void."
+        "Nothing takes that back: delete_invoice, when deletes are enabled, voids it in Gorelo ONLY, so the copy in the "
+        "accounting system stays open (observed with Xero): tell the user, who must void it there too."
     ) in doc
     assert "A total of exactly 0 is created as Paid instead: check Status in the result" in doc
     assert "recipient_emails, when given, are the addresses Gorelo sends the invoice to" in doc
@@ -2370,9 +2370,9 @@ async def test_a_create_makes_exactly_one_post_and_one_read_and_nothing_else(ser
 # --------------------------------------------------------------------------
 
 EFFECT = (
-    "Approving on create pushes the invoice to the connected accounting system at once. Gorelo now says "
-    "delete_invoice sends the void to accounting; an earlier Xero probe left its copy open. "
-    "Verify the accounting status before any manual void."
+    "Approving on create pushes the invoice to the connected accounting system at once, and nothing takes that back: "
+    "voiding it with delete_invoice voids it in Gorelo ONLY, so the copy in the accounting system stays open (observed with "
+    "Xero) and the user must void it there too."
 )
 
 
@@ -2406,19 +2406,29 @@ async def test_the_refusal_says_how_many_lines_and_which_client_and_how_many_rec
     assert mock_gorelo.requests == []
 
 
-async def test_every_text_before_approving_or_voiding_requires_accounting_verification(server, mock_gorelo):
+async def test_every_text_read_before_approving_or_voiding_says_the_void_is_in_gorelo_only(server, mock_gorelo):
+    """Gorelo pushes an Approved invoice to Xero, and the DELETE that voids it
+    (StatusId 4, get_invoice shows Void) leaves the Xero copy open. Nothing in this server takes
+    the push back, so every text the model reads before it approves or voids says so: the docstrings (read at the start
+    of every conversation) and the refusals without confirm (read at the moment the user is asked)."""
     tools = await list_tools(server)
     said = {name: flat(tool_def(name, tools).description) for name in ("create_approved_invoice", "delete_invoice")}
-    for text in said.values():
-        assert "Gorelo now says" in text and "earlier Xero probe" in text
-        assert "Verify the accounting status before any manual void" in text
-        assert "Gorelo ONLY" not in text and "must void it there too" not in text
-        assert text.index("Verify the accounting status") < text.index("Ask the user first")
+    for name, text in said.items():
+        assert "Gorelo ONLY" in text and "accounting system" in text and "stays open" in text, name
+        assert "observed with Xero" in text and "who must void it there too" in text, name
+        assert "cannot be undone except by voiding" not in text and "except by voiding it" not in text, name  # the old claim
+    assert said["delete_invoice"].index("Gorelo ONLY") < said["delete_invoice"].index("Ask the user first")
+    assert said["create_approved_invoice"].index("Gorelo ONLY") < said["create_approved_invoice"].index("Ask the user first")
+    # the refusals (zero HTTP calls) name the same effect, for the approval and for the void of an Approved invoice
     approve = await call_tool_error(server, "create_approved_invoice", GOOD)
     void = await call_tool_error(server, "delete_invoice", {"invoice_number": 1042, "expected_status": "Approved"})
-    for text in (approve, void):
-        assert "earlier Xero probe" in text and "Verify the accounting status before any manual void" in text
-        assert "Gorelo ONLY" not in text and "must void it there too" not in text
+    for refusal_text in (approve, void):
+        assert "in Gorelo ONLY" in refusal_text and "stays open" in refusal_text, refusal_text
+        assert "the user must void it there too" in refusal_text and "observed with Xero" in refusal_text
+        assert "cannot be undone except by voiding" not in refusal_text
+    # and the module text records the observed behavior
+    for fragment in ("happens in Gorelo ONLY", "stays open (observed with Xero)", "can keep its AmountDue"):
+        assert fragment in " ".join(invoices.__doc__.split()), fragment
     assert mock_gorelo.requests == []
 
 
@@ -3047,7 +3057,7 @@ async def test_approve_refuses_without_confirm_with_no_http_and_says_what_would_
     text = await call_tool_error(server, "approve_invoice", {"invoice_id": INVOICE_ID})
     assert text.startswith(f"confirm: refusing to approve invoice {INVOICE_ID} without confirm=true.")
     assert "pushes the invoice to the connected accounting system at once" in text
-    assert "Gorelo now says" in text and "earlier Xero probe" in text and "Verify the accounting status before any manual void" in text
+    assert "voids it in Gorelo ONLY" in text and "the user must void it there too" in text and "observed with Xero" in text
     assert mock_gorelo.requests == []
 
 
@@ -3127,9 +3137,9 @@ async def test_approve_invoice_is_gated_and_says_the_same_things_as_create_appro
     doc = flat(inspect.getdoc(invoices.approve_invoice))
     assert 40 < len(doc) <= 900
     assert "pushes the invoice to the connected accounting system at once" in doc
-    assert "Gorelo now says" in doc and "earlier Xero probe" in doc
-    assert "Verify the accounting status before any manual void" in doc and "A total of exactly 0 is recorded as Paid instead: check Status" in doc
-    assert doc.index("Verify the accounting status") < doc.index("Ask the user first")
+    assert "voids it in Gorelo ONLY, so the copy in the accounting system stays open (observed with Xero)" in doc
+    assert "who must void it there too" in doc and "A total of exactly 0 is recorded as Paid instead: check Status" in doc
+    assert doc.index("Gorelo ONLY") < doc.index("Ask the user first")
     assert doc.endswith("Ask the user first; needs confirm=true.")
     parameter = inspect.signature(spec.fn).parameters["confirm"]
     assert parameter.default is False and "Strict" in repr(parameter.annotation)
@@ -3293,7 +3303,7 @@ async def test_an_approved_no_tax_line_that_still_shows_tax_gets_a_loud_warning(
     assert result["warning"].startswith("WARNING: no_tax was asked for line_items[0]")
     assert f"TaxId {EXEMPT_ID} (the Tax Exempt rate) was sent" in result["warning"]
     assert "APPROVED and already pushed to the accounting system" in result["warning"]
-    assert "Verify the accounting status before any manual void" in result["warning"]
+    assert "voids it in Gorelo ONLY" in result["warning"]
     assert f"tax id {EXEMPT_ID}" in result["note"]
 
 

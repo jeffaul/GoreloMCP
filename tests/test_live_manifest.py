@@ -1896,11 +1896,12 @@ APPROVED = {"Id": 5, "Name": "Approved"}
 VOID = {"Id": 4, "Name": "Void"}
 VOIDED = "(still listed as Void)"
 # Gorelo's void does not reach the accounting system (seen with Xero), so the
-# cleanup says twice that its own accounting status must be verified after the void. Both texts are spelled out here, not read from the module, so that
+# cleanup says twice that its own void is in Gorelo only. Both texts are spelled out here, not read from the module, so that
 # a change of their words fails these tests.
-GORELO_ONLY = "verify accounting status after this void before any manual void"  # next to the command
+GORELO_ONLY = "this voids it in Gorelo only: void its copy in the accounting system by hand too"  # next to the command
 REMINDER = (  # the line of the report for each invoice this cleanup voided
-    "Gorelo now says the void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void"
+    "the void is in Gorelo only: check the accounting system and void the invoice there too "
+    "(Gorelo's void is not pushed to the connected accounting system, seen with Xero)"
 )
 
 
@@ -2361,13 +2362,15 @@ async def test_a_second_cleanup_after_a_void_has_no_reminder_to_give(manifest, m
     assert second.ok and second.voided == [] and not any(line.startswith("reminder:") for line in lines)
 
 
-def test_the_texts_of_the_cleanup_require_verifying_accounting_after_a_void():
+def test_the_texts_of_the_cleanup_say_that_its_void_is_in_gorelo_only():
     module = " ".join(cleanup.__doc__.split())
     assert (
-        "its outcome says to check it there, gives this command with --void-approved and says to verify accounting status after this void (VOID_COMMAND_NOTE)"
+        "its outcome says to check it there, gives this command with --void-approved and says that the command voids in "
+        "Gorelo only (VOID_COMMAND_NOTE: its copy in the accounting system is voided by hand too)"
     ) in module
     assert (
-        "Gorelo now says a void is sent to accounting; an earlier Xero probe left its copy open. Verify the accounting status before any manual void."
+        "Whatever this cleanup voids it voids in Gorelo only: the copy that Gorelo had pushed to the accounting system "
+        "was not voided there (seen with Xero), so it is the operator's to void there."
     ) in module
     assert (
         "the report ends, just before its result line, with a reminder (VOID_REMINDER) for each invoice THIS cleanup voided"

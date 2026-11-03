@@ -371,13 +371,15 @@ async def test_the_tools_that_approve_or_void_an_invoice_say_the_accounting_copy
     tools = await all_tools(server_factory)
     for name in TOOLS_THAT_APPROVE_OR_VOID:
         text = flat(tools[name].description)
-        assert "Gorelo now says" in text and "earlier Xero probe" in text, name
-        assert "Verify the accounting status before any manual void" in text, name
-        assert "Gorelo ONLY" not in text and "must void it there too" not in text, name
-        assert text.index("Verify the accounting status") < text.index("Ask the user first"), name
+        assert "Gorelo ONLY" in text, f"{name} does not say that a void happens in Gorelo only: {text}"
+        assert "accounting system stays open" in text, f"{name} does not say the accounting copy stays open: {text}"
+        assert "who must void it there too" in text, f"{name} does not say the user must void it there too: {text}"
+        assert "observed with Xero" in text, f"{name} does not say that this was seen live: {text}"
+        assert text.index("Gorelo ONLY") < text.index("Ask the user first"), f"{name} says it only after asking: {text}"
     for name, tool in tools.items():
         for where, text in texts_of(tool).items():
-            assert "except by voiding" not in text, (name, where)
+            assert "except by voiding" not in text, f"{name} ({where}) says that voiding takes the approval back: {text}"
+    # a Void invoice can still show AmountDue (seen live), so the void tool says to read Status first (and so do the readers)
     assert "A Void invoice can still show AmountDue: read Status first." in flat(tools["delete_invoice"].description)
 
 

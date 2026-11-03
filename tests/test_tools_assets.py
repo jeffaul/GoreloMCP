@@ -213,7 +213,7 @@ def test_the_single_agent_is_the_list_row_fields_plus_custom_properties_in_the_s
         "Description", "HardwareTypeId", "ContactId", "WarrantyStartDate", "WarrantyEndDate"
     }
     doc = flat(assets_module.__doc__)
-    assert "AgentAssetListItemResponse" in doc and "AgentAssetResponse" in doc and "the same fields" not in doc
+    assert "DeviceListItemResponse" in doc and "DeviceResponse" in doc and "the same fields" not in doc
     assert "the list row's fields plus CustomProperties" in doc and "which the list deliberately leaves out" in doc
     assert "nothing writes them: update_agent" in doc and "Gorelo has no operation that updates a device" not in doc
     assert "IsHidden" in doc and "Value is then always null" in doc
@@ -1118,7 +1118,7 @@ CREATE_PARAMS = [
     "warranty_end_date", "local_ip_address", "ip_address", "manufacturer", "model", "serial_number",
 ]
 UPDATE_PARAMS = [
-    "custom_asset_id", "move_to_client_id", "client_id", "name", "location_id", "hardware_type_id", "description", "contact_id",
+    "custom_asset_id", "client_id", "name", "location_id", "hardware_type_id", "description", "contact_id",
     "warranty_start_date", "warranty_end_date", "local_ip_address", "ip_address", "manufacturer", "model", "serial_number",
     "clear_fields",
 ]
@@ -1167,7 +1167,7 @@ async def test_create_and_update_expose_exactly_the_documented_parameters(server
     assert list(update.inputSchema["properties"]) == UPDATE_PARAMS
     assert update.inputSchema["required"] == ["custom_asset_id"]
     props = update.inputSchema["properties"]
-    assert "MOVE" in props["move_to_client_id"]["description"] and "location_id" in props["move_to_client_id"]["description"]
+    assert "MOVE" in props["client_id"]["description"] and "location_id" in props["client_id"]["description"]
     assert "new client" in props["location_id"]["description"]
     assert "(of the new client when moving)" in props["contact_id"]["description"]
     for tool in (create, update):
@@ -1402,14 +1402,14 @@ SECOND_LOCATION = 4420
 
 def moving(**extra):
     """A call that moves the asset from client 9101 (what row_for holds) to client 9102."""
-    return update_args(move_to_client_id=SECOND, location_id=SECOND_LOCATION, **extra)
+    return update_args(client_id=SECOND, location_id=SECOND_LOCATION, **extra)
 
 
 def after_move(**extra):
     return row_for(ASSET, ClientId=SECOND, LocationId=SECOND_LOCATION, **extra)
 
 
-async def test_update_without_move_to_client_id_sends_only_the_changed_fields_then_reads_the_row_back(server, mock_gorelo):
+async def test_update_without_client_id_sends_only_the_changed_fields_then_reads_the_row_back(server, mock_gorelo):
     row = row_for(ASSET, Name="New name")
     mock_gorelo.on("PATCH", PATCH_PATH, envelope({"Id": ASSET}))
     mock_gorelo.on("GET", PATCH_PATH, envelope(row))
@@ -1511,7 +1511,7 @@ async def test_a_patch_that_answers_the_same_id_in_upper_case_is_the_same_asset(
 @pytest.mark.parametrize(
     "property_name, param",
     [
-        ("Name", "name"), ("ClientId", "move_to_client_id"), ("LocationId", "location_id"),
+        ("Name", "name"), ("ClientId", "client_id"), ("LocationId", "location_id"),
         ("HardwareTypeId", "hardware_type_id"), ("Description", "description"), ("ContactId", "contact_id"),
         ("WarrantyEndDate", "warranty_end_date"), ("IpAddress", "ip_address"), ("SerialNumber", "serial_number"),
         ("WarrantyStartDate", "warranty_start_date"), ("LocalIPAddress", "local_ip_address"),
@@ -1535,7 +1535,7 @@ async def test_update_maps_a_404_without_reading_back(server, mock_gorelo):
 
 @pytest.mark.parametrize(
     "property_name, param",
-    [("ClientId", "move_to_client_id"), ("LocationId", "location_id"), ("ContactId", "contact_id")],
+    [("ClientId", "client_id"), ("LocationId", "location_id"), ("ContactId", "contact_id")],
 )
 async def test_update_maps_a_gorelo_400_on_a_move_to_the_snake_case_parameter(server, mock_gorelo, property_name, param):
     mock_gorelo.on("GET", PATCH_PATH, envelope(row_for(ASSET)))
@@ -1550,8 +1550,8 @@ async def test_update_maps_a_gorelo_400_on_a_move_to_the_snake_case_parameter(se
     [
         ({"custom_asset_id": "abc", "name": "N"}, "custom_asset_id"),
         ({"custom_asset_id": 5, "name": "N"}, "custom_asset_id"),
-        ({"move_to_client_id": 0, "name": "N"}, "move_to_client_id"),
-        ({"move_to_client_id": "9101", "name": "N"}, "move_to_client_id"),
+        ({"client_id": 0, "name": "N"}, "client_id"),
+        ({"client_id": "9101", "name": "N"}, "client_id"),
         ({"name": " "}, "name: must not be empty"),
         ({"name": "x" * 301}, "name: at most 300 characters"),
         ({"description": "x" * 1001}, "description: at most 1000"),
@@ -1568,13 +1568,13 @@ async def test_update_maps_a_gorelo_400_on_a_move_to_the_snake_case_parameter(se
         ({"clear_fields": ["name"]}, "clear_fields"),
         ({"clear_fields": ["location_id"]}, "clear_fields"),
         ({"clear_fields": ["hardware_type_id"]}, "clear_fields"),
-        ({"clear_fields": ["move_to_client_id"]}, "clear_fields"),
+        ({"clear_fields": ["client_id"]}, "clear_fields"),
         ({"clear_fields": "description"}, "clear_fields"),
         ({"clear_fields": [3]}, "clear_fields"),
         ({"warranty_end_date": "2027-03-31T00:00:00Z"}, "warranty_end_date: expected a calendar date"),
         ({"warranty_end_date": "2027-03-31+02:00"}, "warranty_end_date: expected a calendar date"),
-        ({"move_to_client_id": True}, "move_to_client_id"),
-        ({"move_to_client_id": -1, "location_id": 4410}, "move_to_client_id"),
+        ({"client_id": True}, "client_id"),
+        ({"client_id": -1, "location_id": 4410}, "client_id"),
     ],
 )
 async def test_update_refuses_bad_input_before_any_http_call(server, mock_gorelo, arguments, fragment):
@@ -1594,16 +1594,16 @@ async def test_update_refuses_a_value_together_with_a_clear_of_the_same_field(se
     assert mock_gorelo.requests == []
 
 
-async def test_update_with_move_to_client_id_alone_sends_nothing(server, mock_gorelo):
-    for move_to_client_id in (9101, SECOND):
-        text = await call_tool_error(server, "update_custom_asset", update_args(move_to_client_id=move_to_client_id))
-        assert "nothing to change" in text and "move_to_client_id alone changes nothing" in text and "location_id" in text
+async def test_update_with_client_id_alone_sends_nothing(server, mock_gorelo):
+    for client_id in (9101, SECOND):
+        text = await call_tool_error(server, "update_custom_asset", update_args(client_id=client_id))
+        assert "nothing to change" in text and "client_id alone changes nothing" in text and "location_id" in text
     assert mock_gorelo.requests == []
 
 
 async def test_update_with_nothing_at_all_sends_nothing(server, mock_gorelo):
     text = await call_tool_error(server, "update_custom_asset", update_args())
-    assert "nothing to change" in text and "move_to_client_id alone changes nothing" in text and "location_id" in text
+    assert "nothing to change" in text and "client_id alone changes nothing" in text and "location_id" in text
     assert mock_gorelo.requests == []
 
 
@@ -1613,11 +1613,11 @@ async def test_update_requires_only_the_asset_id(server, mock_gorelo):
     assert mock_gorelo.requests == []
 
 
-async def test_update_naming_the_current_client_moves_nothing_and_still_sends_move_to_client_id(server, mock_gorelo):
+async def test_update_naming_the_current_client_moves_nothing_and_still_sends_client_id(server, mock_gorelo):
     after = row_for(ASSET, Name="New name")
     mock_gorelo.on("GET", PATCH_PATH, in_order(envelope(row_for(ASSET)), envelope(after)))
     mock_gorelo.on("PATCH", PATCH_PATH, envelope({"Id": ASSET}))
-    result = await call_tool(server, "update_custom_asset", update_args(move_to_client_id=9101, name="New name"))
+    result = await call_tool(server, "update_custom_asset", update_args(client_id=9101, name="New name"))
     assert [(r.method, r.path) for r in mock_gorelo.requests] == [("GET", PATCH_PATH), ("PATCH", PATCH_PATH), ("GET", PATCH_PATH)]
     assert mock_gorelo.requests[1].json == {"ClientId": 9101, "Name": "New name"}
     assert result == after
@@ -1628,7 +1628,7 @@ async def test_update_naming_the_current_client_needs_no_location_or_contact_eve
     after = row_for(ASSET, ContactId=7962, Name="N")
     mock_gorelo.on("GET", PATCH_PATH, in_order(envelope(before), envelope(after)))
     mock_gorelo.on("PATCH", PATCH_PATH, envelope({"Id": ASSET}))
-    result = await call_tool(server, "update_custom_asset", update_args(move_to_client_id=9101, name="N"))
+    result = await call_tool(server, "update_custom_asset", update_args(client_id=9101, name="N"))
     assert mock_gorelo.requests[1].json == {"ClientId": 9101, "Name": "N"}
     assert result == after
 
@@ -1675,9 +1675,9 @@ async def test_update_can_change_other_fields_in_the_same_call_as_a_move(server,
 
 async def test_update_refuses_a_move_without_location_id(server, mock_gorelo):
     mock_gorelo.on("GET", PATCH_PATH, envelope(row_for(ASSET)))
-    text = await call_tool_error(server, "update_custom_asset", update_args(move_to_client_id=SECOND, name="N"))
+    text = await call_tool_error(server, "update_custom_asset", update_args(client_id=SECOND, name="N"))
     assert text == (
-        "location_id: required when move_to_client_id moves the asset (it is at client 9101 now); "
+        "location_id: required when client_id moves the asset (it is at client 9101 now); "
         "give a location of client 9102 (list_client_locations). Nothing was changed."
     )
     assert [r.method for r in mock_gorelo.requests] == ["GET"]
@@ -1686,15 +1686,15 @@ async def test_update_refuses_a_move_without_location_id(server, mock_gorelo):
 
 async def test_update_refuses_a_move_of_an_asset_with_no_client_without_location_id(server, mock_gorelo):
     mock_gorelo.on("GET", PATCH_PATH, envelope(row_for(ASSET, ClientId=None)))
-    text = await call_tool_error(server, "update_custom_asset", update_args(move_to_client_id=SECOND, name="N"))
-    assert "location_id: required when move_to_client_id moves the asset (it has no client now)" in text
+    text = await call_tool_error(server, "update_custom_asset", update_args(client_id=SECOND, name="N"))
+    assert "location_id: required when client_id moves the asset (it has no client now)" in text
     assert [r.method for r in mock_gorelo.requests] == ["GET"]
     assert mock_gorelo.calls("PATCH") == []
 
 
 # The refusal of a move that leaves the asset's contact unsaid (_is_move), for contact 7962 and the new client 9102.
 MOVE_CONTACT_REFUSAL = (
-    "contact_id: the asset holds contact 7962; when move_to_client_id moves it, give contact_id (a contact of client 9102, "
+    "contact_id: the asset holds contact 7962; when client_id moves it, give contact_id (a contact of client 9102, "
     "which may be 7962 if it already belongs to that client) or put contact_id in clear_fields to unassign it. "
     "Nothing was changed."
 )
@@ -1724,7 +1724,7 @@ async def test_update_refuses_a_pre_read_it_cannot_use(server, mock_gorelo, held
     mock_gorelo.on("GET", PATCH_PATH, envelope(held))
     text = await call_tool_error(server, "update_custom_asset", moving())
     assert text.startswith("custom_asset_id: GET /v1/assets/custom/{customAssetId} returned a ")
-    assert text.endswith("refusing to guess whether move_to_client_id moves the asset. Nothing was changed.")
+    assert text.endswith("refusing to guess whether client_id moves the asset. Nothing was changed.")
     assert [r.method for r in mock_gorelo.requests] == ["GET"]
     assert mock_gorelo.calls("PATCH") == []
 
@@ -1815,7 +1815,7 @@ async def test_a_move_whose_patch_times_out_loses_the_connection_or_answers_502_
 async def test_update_checks_the_new_client_only_for_a_move(server, mock_gorelo):
     mock_gorelo.on("GET", PATCH_PATH, in_order(envelope(row_for(ASSET)), envelope(row_for(ASSET, ClientId=9999))))
     mock_gorelo.on("PATCH", PATCH_PATH, envelope({"Id": ASSET}))
-    result = await call_tool(server, "update_custom_asset", update_args(move_to_client_id=9101, name="N"))
+    result = await call_tool(server, "update_custom_asset", update_args(client_id=9101, name="N"))
     assert result == row_for(ASSET, ClientId=9999)
 
 
@@ -1825,7 +1825,7 @@ def test_update_declares_the_single_get_and_no_list():
     assert spec.destructive_hint is True and spec.kind == "write"
 
 
-def test_the_patch_takes_a_nullable_move_to_client_id_in_the_spec_index(spec_index):
+def test_the_patch_takes_a_nullable_client_id_in_the_spec_index(spec_index):
     assert spec_index.op("PATCH /v1/assets/custom/{customAssetId}").body["fields"]["ClientId"]["nullable"] is True
 
 
@@ -2862,19 +2862,3 @@ def test_no_other_tool_text_in_this_module_names_the_gated_delete():
     for name, spec in ((s.name, s) for s in REGISTRY.specs if s.fn.__module__ == assets_module.__name__):
         if name != "delete_asset_type":
             assert "delete_asset_type" not in flat(spec.fn.__doc__ or ""), name
-
-
-async def test_aultech_ordinary_edit_never_sends_owner_argument_as_move(server, mock_gorelo):
-    after = row_for(ASSET, Name="Renamed")
-    mock_gorelo.on("GET", PATCH_PATH, envelope(after))
-    mock_gorelo.on("PATCH", PATCH_PATH, envelope({"Id": ASSET}))
-    await call_tool(server, "update_custom_asset", update_args(client_id=SECOND, name="Renamed"))
-    assert mock_gorelo.requests[0].method == "PATCH"
-    assert mock_gorelo.requests[0].json == {"Name": "Renamed"}
-
-
-async def test_aultech_explicit_move_refuses_wrong_expected_owner(server, mock_gorelo):
-    mock_gorelo.on("GET", PATCH_PATH, envelope(row_for(ASSET)))
-    text = await call_tool_error(server, "update_custom_asset", moving(client_id=9999))
-    assert "ownership could not be verified" in text
-    assert mock_gorelo.calls("PATCH") == []

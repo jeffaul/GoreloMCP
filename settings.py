@@ -59,7 +59,7 @@ TOOLSETS: tuple[str, ...] = ("core", "tickets", "time", "billing", "uptime", "pr
 DEFAULT_TOOLSETS: tuple[str, ...] = ("core", "tickets", "time", "billing", "uptime")
 DEFAULT_BASE_URL = "https://api.usw.gorelo.io/v1"
 API_DOMAIN = "gorelo.io"  # the API host must be this or a subdomain of it
-BUILTIN_REDIRECT_DOMAINS: tuple[str, ...] = ("claude.ai", "claude.com", "chatgpt.com", "openai.com", "localhost")  # personal_auth's own default
+BUILTIN_REDIRECT_DOMAINS: tuple[str, ...] = ("claude.ai", "claude.com", "localhost")  # personal_auth's own default
 
 ENV_API_KEY = "GORELO_API_KEY"
 ENV_BASE_URL = "GORELO_BASE_URL"
